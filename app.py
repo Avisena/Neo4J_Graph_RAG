@@ -3,7 +3,7 @@ from graph_rag import chain  # replace with your actual script name (without .py
 
 st.set_page_config(page_title="Tacia with Graph", layout="wide")
 st.title("🧠 Tacia with Graph Knowledge")
-st.subtitle("Dibuat dengan dokumen:")
+st.markdown("### Dibuat dengan dokumen:")
 st.markdown(
     "### [PER-5/PJ/2023 - Pengembalian Kelebihan Pajak](https://drive.google.com/file/d/1Sss1-LiQtR5Snv29d7wrhSKasefO_H9H/view?usp=sharing)",
     unsafe_allow_html=True
