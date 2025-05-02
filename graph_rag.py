@@ -4,6 +4,7 @@ Script version of enhancing_rag_with_graph.ipynb
 """
 
 import os
+import streamlit as st
 from typing import Tuple, List
 
 from langchain_core.runnables import (
@@ -27,10 +28,10 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 
 # Env setup
-os.environ["OPENAI_API_KEY"] = "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"
-os.environ["NEO4J_URI"] = "neo4j+s://0f38f5f3.databases.neo4j.io"
-os.environ["NEO4J_USERNAME"] = "neo4j"
-os.environ["NEO4J_PASSWORD"] = "Qs8ejTd-eP0hgj3z5Exxy4SkTE2tUSi_3COOza4CeEs"
+os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
+os.environ["NEO4J_URI"] = st.secrets["NEO4J_URI"]
+os.environ["NEO4J_USERNAME"] = st.secrets["NEO4J_USERNAME"]
+os.environ["NEO4J_PASSWORD"] = st.secrets["NEO4J_PASSWORD"]
 
 # Based on the class definition, here's how to properly initialize Neo4jGraph
 graph = Neo4jGraph()
