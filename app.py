@@ -13,6 +13,11 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+st.markdown(
+    "#### [ PERUBAHAN KETIGA ATAS UNDANG.UNDANG NOMOR 19 TAHUN 2OO3 TENTANG BADAN USAHA MILIK NEGARA](https://drive.google.com/file/d/11MSm1jdYLd59MvexWpPbedTgqB0Vz0IY/view?usp=sharing)",
+    unsafe_allow_html=True
+)
+
 # Initialize chat history in session state
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
