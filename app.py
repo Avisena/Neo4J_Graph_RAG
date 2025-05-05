@@ -46,4 +46,4 @@ for i, (user_q, bot_a) in enumerate(st.session_state.chat_history):
 # Option to clear chat
 if st.button("🔄 Clear Chat"): 
     st.session_state.chat_history = []
-    st.experimental_rerun()
+    st.rerun() 
