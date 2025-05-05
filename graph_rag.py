@@ -93,7 +93,7 @@ def structured_retriever(question: str) -> str:
     for entity in entities.names:
         response = graph.query(
             """
-            CALL db.index.fulltext.queryNodes('entity', $query, {limit:2})
+            CALL db.index.fulltext.queryNodes('entity', $query, {limit:5})
             YIELD node,score
             CALL {
               WITH node
