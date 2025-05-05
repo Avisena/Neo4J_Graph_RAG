@@ -19,7 +19,7 @@ st.markdown(
 )
 
 st.markdown(
-    "#### [ PERATURAN MENTER! KEUANGAN REPUBLIK INDONESIA NOMOR 72 TAHUN 2023 ](https://drive.google.com/file/d/1yoGy4MfLCM9wnvaKI7qaDW4o611ROG0w/view?usp=sharing)",
+    "#### [ PERATURAN MENTERI KEUANGAN REPUBLIK INDONESIA NOMOR 72 TAHUN 2023 ](https://drive.google.com/file/d/1yoGy4MfLCM9wnvaKI7qaDW4o611ROG0w/view?usp=sharing)",
     unsafe_allow_html=True
 )
 
