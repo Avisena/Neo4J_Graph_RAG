@@ -38,7 +38,6 @@ GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
 graph = Neo4jGraph()
 llm = ChatOpenAI(temperature=0.2,   # Lower temperature for precise, factual responses
     top_p=0.85,        # Balanced flexibility and coherence
-    max_tokens=500,    # Allow longer responses for detailed legal explanations
     frequency_penalty=0.3,  # Avoid repetition of terms or phrases
     presence_penalty=0.3, 
     model_name="o4-mini")
