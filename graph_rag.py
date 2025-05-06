@@ -186,7 +186,7 @@ chain = (
     | prompt
     | llm
     | StrOutputParser()
-)
+).with_config({"verbose": True})
 
 # Test example
 if __name__ == "__main__":
