@@ -36,7 +36,12 @@ os.environ["NEO4J_PASSWORD"] = st.secrets["NEO4J_PASSWORD"]
 GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
 # Based on the class definition, here's how to properly initialize Neo4jGraph
 graph = Neo4jGraph()
-llm = ChatOpenAI(temperature=0.5, model_name="o4-mini")
+llm = ChatOpenAI(temperature=0.2,   # Lower temperature for precise, factual responses
+    top_p=0.85,        # Balanced flexibility and coherence
+    max_tokens=500,    # Allow longer responses for detailed legal explanations
+    frequency_penalty=0.3,  # Avoid repetition of terms or phrases
+    presence_penalty=0.3, 
+    model_name="o4-mini")
 # llm = ChatGroq(temperature=0.9, groq_api_key=GROQ_API_KEY, model_name="deepseek-r1-distill-llama-70b")
 
 def preprocess_documents(pdf_path: str = "file (77).pdf"):
