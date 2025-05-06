@@ -76,12 +76,14 @@ graph.query("CREATE FULLTEXT INDEX entity IF NOT EXISTS FOR (e:__Entity__) ON EA
 class Entities(BaseModel):
     names: List[str] = Field(..., description="All the person, organization, or business entities that appear in the text")
 
-prompt = ChatPromptTemplate.from_messages([
-    ("system", "You are extracting organization and person entities from the text."),
-    ("human", "Use the given format to extract information from the following input: {question}"),
+# COT reasoning prompt
+COT_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", "You will reason through the following steps before answering."),
+    ("human", "Break down the problem into logical steps and explain each one before providing the final answer. Here is the question: {question}"),
+    ("assistant", "Provide your reasoning and the final answer after each step.")
 ])
 
-entity_chain = prompt | llm.with_structured_output(Entities)
+entity_chain = COT_PROMPT | llm.with_structured_output(Entities)
 
 def generate_full_text_query(input: str) -> str:
     words = [el for el in remove_lucene_chars(input).split() if el]
@@ -135,26 +137,31 @@ def _format_chat_history(chat_history: List[Tuple[str, str]]) -> List:
 
 _search_query = RunnableBranch(
     (RunnableLambda(lambda x: bool(x.get("chat_history"))).with_config(run_name="HasChatHistoryCheck"),
-     RunnablePassthrough.assign(chat_history=lambda x: _format_chat_history(x["chat_history"]))
-     | CONDENSE_QUESTION_PROMPT
+     RunnablePassthrough.assign(chat_history=lambda x: _format_chat_history(x["chat_history"])),
+     COT_PROMPT  # Add COT reasoning before the final answer
      | ChatOpenAI(temperature=0)
      | StrOutputParser()),
     RunnableLambda(lambda x: x["question"]),
 )
 
 # Final RAG chain
-template = """Answer the question based only on the following context:
+template = """Answer the question based on the following context and reasoning:
 {context}
 
+Reasoning:
+{reasoning}
+
 Question: {question}
-Use natural language and be concise.
+Final Answer: Use natural language and be concise.
 Answer:"""
+
 prompt = ChatPromptTemplate.from_template(template)
 
 chain = (
     RunnableParallel({
         "context": _search_query | retriever,
         "question": RunnablePassthrough(),
+        "reasoning": RunnablePassthrough()  # Add reasoning as part of the final prompt
     })
     | prompt
     | llm
@@ -163,7 +170,9 @@ chain = (
 
 # Test example
 if __name__ == "__main__":
-    print(chain.invoke({"question": "Apa alasan diterbitkannya Peraturan Direktur Jenderal Pajak Nomor PER-28/PJ/2018 tentang Surat Keterangan Domisili bagi Subjek Pajak Dalam Negeri Indonesia dalam Rangka Penerapan Persetujuan Penghindaran Pajak Berganda?"}))
+    print(chain.invoke({
+        "question": "Apa alasan diterbitkannya Peraturan Direktur Jenderal Pajak Nomor PER-28/PJ/2018 tentang Surat Keterangan Domisili bagi Subjek Pajak Dalam Negeri Indonesia dalam Rangka Penerapan Persetujuan Penghindaran Pajak Berganda?",
+    }))
 
     # print(chain.invoke({
     #     "question": "Tolong jelaskan lebih lanjut pasal-pasal yang mengatur lebih lanjut untuk poin 2 di atas",
