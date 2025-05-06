@@ -19,6 +19,7 @@ from langchain.document_loaders import WikipediaLoader
 from langchain_community.document_loaders import PDFPlumberLoader
 from langchain_text_splitters import TokenTextSplitter
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_groq import ChatGroq
 from langchain_experimental.graph_transformers import LLMGraphTransformer
 from langchain_community.vectorstores import Neo4jVector
 from langchain_community.vectorstores.neo4j_vector import remove_lucene_chars
@@ -32,11 +33,11 @@ os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
 os.environ["NEO4J_URI"] = st.secrets["NEO4J_URI"]
 os.environ["NEO4J_USERNAME"] = st.secrets["NEO4J_USERNAME"]
 os.environ["NEO4J_PASSWORD"] = st.secrets["NEO4J_PASSWORD"]
-
+GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
 # Based on the class definition, here's how to properly initialize Neo4jGraph
 graph = Neo4jGraph()
-llm = ChatOpenAI(temperature=0, model_name="gpt-4o-mini")
-
+# llm = ChatOpenAI(temperature=0, model_name="gpt-4o-mini")
+llm = ChatGroq(temperature=0.9, groq_api_key=GROQ_API_KEY, model_name="deepseek-r1-distill-llama-70b")
 
 def preprocess_documents(pdf_path: str = "file (77).pdf"):
     # Load and split PDF
