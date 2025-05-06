@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Enhanced Legal Chatbot with Chain-of-Thought Legal Reasoning
+Script version of enhancing_rag_with_graph.ipynb
 """
 
 import os
@@ -24,17 +24,43 @@ from langchain_community.vectorstores import Neo4jVector
 from langchain_community.vectorstores.neo4j_vector import remove_lucene_chars
 from dotenv import load_dotenv
 
-# Load environment variables
+# Load environment variables from a .env file
 load_dotenv(override=True)
+
+# Env setup
 os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
 os.environ["NEO4J_URI"] = st.secrets["NEO4J_URI"]
 os.environ["NEO4J_USERNAME"] = st.secrets["NEO4J_USERNAME"]
 os.environ["NEO4J_PASSWORD"] = st.secrets["NEO4J_PASSWORD"]
 
+# Based on the class definition, here's how to properly initialize Neo4jGraph
 graph = Neo4jGraph()
 llm = ChatOpenAI(temperature=0, model_name="gpt-4o-mini")
 
-# Initialize Vector Store
+
+def preprocess_documents(pdf_path: str = "file (77).pdf"):
+    # Load and split PDF
+    loader = PDFPlumberLoader(pdf_path)
+    raw_documents = loader.load()
+    text_splitter = TokenTextSplitter(chunk_size=512, chunk_overlap=24)
+    documents = text_splitter.split_documents(raw_documents)
+
+    # Generate graph documents
+    llm = ChatOpenAI(temperature=0, model_name="gpt-4o-mini")
+    llm_transformer = LLMGraphTransformer(llm=llm)
+    graph_documents = llm_transformer.convert_to_graph_documents(documents)
+    graph.add_graph_documents(graph_documents, baseEntityLabel=True, include_source=True)
+
+    # Create vector index
+    Neo4jVector.from_existing_graph(
+        OpenAIEmbeddings(),
+        search_type="hybrid",
+        node_label="Document",
+        text_node_properties=["text"],
+        embedding_node_property="embedding"
+    )
+
+# Only run QA chain
 vector_index = Neo4jVector.from_existing_graph(
     OpenAIEmbeddings(),
     search_type="hybrid",
@@ -43,17 +69,21 @@ vector_index = Neo4jVector.from_existing_graph(
     embedding_node_property="embedding"
 )
 
+
+# Create fulltext index
 graph.query("CREATE FULLTEXT INDEX entity IF NOT EXISTS FOR (e:__Entity__) ON EACH [e.id]")
 
 class Entities(BaseModel):
-    names: List[str] = Field(..., description="All person, organization, or legal entities in the text")
+    names: List[str] = Field(..., description="All the person, organization, or business entities that appear in the text")
 
-prompt_entities = ChatPromptTemplate.from_messages([
-    ("system", "Extract key legal entities (laws, sections, terms) from the question."),
-    ("human", "Input: {question}"),
+# COT reasoning prompt
+COT_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", "You will reason through the following steps before answering."),
+    ("human", "Break down the problem into logical steps and explain each one before providing the final answer. Here is the question: {question}"),
+    ("assistant", "Provide your reasoning and the final answer after each step.")
 ])
 
-entity_chain = prompt_entities | llm.with_structured_output(Entities)
+entity_chain = COT_PROMPT | llm.with_structured_output(Entities)
 
 def generate_full_text_query(input: str) -> str:
     words = [el for el in remove_lucene_chars(input).split() if el]
@@ -67,9 +97,18 @@ def structured_retriever(question: str) -> str:
             """
             CALL db.index.fulltext.queryNodes('entity', $query, {limit:10})
             YIELD node,score
-            MATCH (node)-[*1..2]-(related)
-            RETURN DISTINCT related.id AS output LIMIT 50
-            """, {"query": generate_full_text_query(entity)}
+            CALL {
+              WITH node
+              MATCH (node)-[r:!MENTIONS]->(neighbor)
+              RETURN node.id + ' - ' + type(r) + ' -> ' + neighbor.id AS output
+              UNION ALL
+              WITH node
+              MATCH (node)<-[r:!MENTIONS]-(neighbor)
+              RETURN neighbor.id + ' - ' + type(r) + ' -> ' +  node.id AS output
+            }
+            RETURN output LIMIT 50
+            """,
+            {"query": generate_full_text_query(entity)}
         )
         result += "\n".join([el['output'] for el in response]) + "\n"
     return result.strip()
@@ -79,6 +118,7 @@ def retriever(question: str):
     unstructured_data = [el.page_content for el in vector_index.similarity_search(question)]
     return f"Structured data:\n{structured_data}\nUnstructured data:\n#Document ".join(unstructured_data)
 
+# Condense follow-up questions
 CONDENSE_QUESTION_PROMPT = PromptTemplate.from_template(
     """Given the following conversation and a follow up question, rephrase the follow up question to be a standalone question,
 in its original language.
@@ -97,43 +137,45 @@ def _format_chat_history(chat_history: List[Tuple[str, str]]) -> List:
 
 _search_query = RunnableBranch(
     (RunnableLambda(lambda x: bool(x.get("chat_history"))).with_config(run_name="HasChatHistoryCheck"),
-     RunnablePassthrough.assign(chat_history=lambda x: _format_chat_history(x["chat_history"]))
-     | CONDENSE_QUESTION_PROMPT
+     RunnablePassthrough.assign(chat_history=lambda x: _format_chat_history(x["chat_history"])),
+     COT_PROMPT  # Add COT reasoning before the final answer
      | ChatOpenAI(temperature=0)
      | StrOutputParser()),
     RunnableLambda(lambda x: x["question"]),
 )
 
-# LEGAL CHAIN-OF-THOUGHT PROMPT
-COT_PROMPT = ChatPromptTemplate.from_template("""
-You are a legal assistant. Use structured legal reasoning to answer.
-
-Step 1: Identify the key legal issue in the question.
-Step 2: Identify the main law(s) or regulation(s) relevant to the issue.
-Step 3: Retrieve related articles, sections, or contradictory regulations.
-Step 4: Explore the broader legal implication, intention of the law, or comparisons.
-Step 5: Provide the final interpretation clearly.
-
-Use the following context to support your answer:
+# Final RAG chain
+template = """Answer the question based on the following context and reasoning:
 {context}
 
-Question: {question}
-Answer:
-""")
+Reasoning:
+{reasoning}
 
-# Final Chain
+Question: {question}
+Final Answer: Use natural language and be concise.
+Answer:"""
+
+prompt = ChatPromptTemplate.from_template(template)
+
 chain = (
     RunnableParallel({
         "context": _search_query | retriever,
         "question": RunnablePassthrough(),
+        "reasoning": RunnablePassthrough()  # Add reasoning as part of the final prompt
     })
-    | COT_PROMPT
+    | prompt
     | llm
     | StrOutputParser()
 )
 
-# Test
+# Test example
 if __name__ == "__main__":
     print(chain.invoke({
-        "question": "Apa alasan diterbitkannya Peraturan Direktur Jenderal Pajak Nomor PER-28/PJ/2018 tentang Surat Keterangan Domisili bagi Subjek Pajak Dalam Negeri Indonesia dalam Rangka Penerapan Persetujuan Penghindaran Pajak Berganda?"
+        "question": "Apa alasan diterbitkannya Peraturan Direktur Jenderal Pajak Nomor PER-28/PJ/2018 tentang Surat Keterangan Domisili bagi Subjek Pajak Dalam Negeri Indonesia dalam Rangka Penerapan Persetujuan Penghindaran Pajak Berganda?",
     }))
+
+    # print(chain.invoke({
+    #     "question": "Tolong jelaskan lebih lanjut pasal-pasal yang mengatur lebih lanjut untuk poin 2 di atas",
+    #     "chat_history": [("Apa kriteria agar seorang individu dianggap sebagai subjek pajak dalam negeri di Indonesia?",
+    #                       "Seorang individu dianggap sebagai subjek pajak dalam negeri di Indonesia jika memenuhi salah satu dari kriteria berikut:\n\n1. Bertempat tinggal di Indonesia.\n2. Berada di Indonesia lebih dari 183 hari dalam jangka waktu 12 bulan.\n3. Dalam suatu Tahun Pajak, berada di Indonesia dan memiliki niat untuk bertempat tinggal di Indonesia.")],
+    # }))
