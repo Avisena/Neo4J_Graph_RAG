@@ -8,7 +8,7 @@ import streamlit as st
 from typing import Tuple, List
 
 from langchain_core.runnables import (
-    RunnableBranch, RunnableLambda, RunnableParallel, RunnablePassthrough
+    RunnableBranch, RunnableLambda, RunnableParallel, RunnablePassthrough, RunnableSequence
 )
 from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
 from langchain_core.pydantic_v1 import BaseModel, Field
