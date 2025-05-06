@@ -3,6 +3,7 @@ openai
 langchain
 langchain-community
 langchain-openai
+langchain-groq
 langchain-core
 langchain-experimental
 pydantic==1.10.13  # LangChain compatibility
