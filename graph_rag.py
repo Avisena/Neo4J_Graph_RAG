@@ -147,11 +147,15 @@ def _format_chat_history(chat_history: List[Tuple[str, str]]) -> List:
     return buffer
 
 _search_query = RunnableBranch(
-    (RunnableLambda(lambda x: bool(x.get("chat_history"))).with_config(run_name="HasChatHistoryCheck"),
-     RunnablePassthrough.assign(chat_history=lambda x: _format_chat_history(x["chat_history"])),
-     COT_PROMPT  # Add COT reasoning before the final answer
-     | ChatOpenAI(temperature=0)
-     | StrOutputParser()),
+    (
+        RunnableLambda(lambda x: bool(x.get("chat_history"))).with_config(run_name="HasChatHistoryCheck"),
+        RunnableSequence(
+            RunnablePassthrough.assign(chat_history=lambda x: _format_chat_history(x["chat_history"])) 
+            | COT_PROMPT 
+            | ChatOpenAI(temperature=0) 
+            | StrOutputParser()
+        )
+    ),
     RunnableLambda(lambda x: x["question"]),
 )
 
