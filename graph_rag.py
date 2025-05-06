@@ -78,9 +78,20 @@ class Entities(BaseModel):
 
 # COT reasoning prompt
 COT_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", "You will reason through the following steps before answering."),
-    ("human", "Break down the problem into logical steps and explain each one before providing the final answer. Here is the question: {question}"),
-    ("assistant", "Provide your reasoning and the final answer after each step.")
+    ("system", 
+     "You are a legal assistant trained to analyze legal texts, regulations, and policies. "
+     "Before answering any legal question, you must go through structured reasoning. "
+     "Think like a legal consultant who explores broader legal relationships and multiple interpretations. "
+     "Your goal is to help the user understand the rationale behind the law."),
+    
+    ("human", 
+     "A client has asked the following legal question: {question} "
+     "Break it down into logical steps, identify relevant legal concepts or articles, and explore their relationships. "
+     "Include any applicable exceptions, interpretations, or comparative provisions. "
+     "Then provide a concise and practical answer."),
+    
+    ("assistant", 
+     "Step-by-step legal reasoning and final answer:")
 ])
 
 entity_chain = COT_PROMPT | llm.with_structured_output(Entities)
