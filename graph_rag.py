@@ -46,7 +46,7 @@ def preprocess_documents(pdf_path: str = "file (77).pdf"):
     documents = text_splitter.split_documents(raw_documents)
 
     # Generate graph documents
-    llm = ChatOpenAI(temperature=0, model_name="gpt-4o-mini")
+    llm = ChatOpenAI(temperature=0, model_name="o4-mini")
     llm_transformer = LLMGraphTransformer(llm=llm)
     graph_documents = llm_transformer.convert_to_graph_documents(documents)
     graph.add_graph_documents(graph_documents, baseEntityLabel=True, include_source=True)
