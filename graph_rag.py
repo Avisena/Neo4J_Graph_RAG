@@ -40,7 +40,7 @@ llm = ChatOpenAI(temperature=0.2,   # Lower temperature for precise, factual res
     top_p=0.85,        # Balanced flexibility and coherence
     frequency_penalty=0.3,  # Avoid repetition of terms or phrases
     presence_penalty=0.3, 
-    model_name="o4-mini")
+    model_name="gpt-4o-mini")
 # llm = ChatGroq(temperature=0.9, groq_api_key=GROQ_API_KEY, model_name="deepseek-r1-distill-llama-70b")
 
 def preprocess_documents(pdf_path: str = "file (77).pdf"):
