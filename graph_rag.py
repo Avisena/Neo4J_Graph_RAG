@@ -99,7 +99,15 @@ COT_PROMPT = ChatPromptTemplate.from_messages([
      "Step-by-step legal reasoning and final answer:")
 ])
 
+QUERY_EXPANSION_PROMPT = PromptTemplate.from_template(
+    """You are a legal assistant tasked with expanding queries for better search results.
+Original question: {question}
+Expand this into related phrases, synonyms, and alternative phrasings useful for retrieval in legal databases:
+Expanded query (comma-separated):"""
+)
+
 entity_chain = COT_PROMPT | llm.with_structured_output(Entities)
+query_expander = QUERY_EXPANSION_PROMPT | llm | StrOutputParser()
 
 def generate_full_text_query(input: str) -> str:
     words = [el for el in remove_lucene_chars(input).split() if el]
@@ -130,9 +138,22 @@ def structured_retriever(question: str) -> str:
     return result.strip()
 
 def retriever(question: str):
-    structured_data = structured_retriever(question)
-    unstructured_data = [el.page_content for el in vector_index.similarity_search(question)]
-    return f"Structured data:\n{structured_data}\nUnstructured data:\n#Document ".join(unstructured_data)
+    # Expand query
+    expanded_query = query_expander.invoke({"question": question})
+    expanded_variants = [q.strip() for q in expanded_query.split(",") if q.strip()]
+    
+    # Collect structured and unstructured results from all variants
+    structured_results, unstructured_results = [], []
+
+    for variant in expanded_variants:
+        structured = structured_retriever(variant)
+        structured_results.append(f"## From variant: {variant}\n{structured}")
+        
+        unstructured_docs = vector_index.similarity_search(variant)
+        unstructured_results.extend([f"#Document {doc.page_content}" for doc in unstructured_docs])
+    
+    return f"Structured data:\n{chr(10).join(structured_results)}\n\nUnstructured data:\n{chr(10).join(unstructured_results)}"
+
 
 # Condense follow-up questions
 CONDENSE_QUESTION_PROMPT = PromptTemplate.from_template(
@@ -181,12 +202,13 @@ chain = (
     RunnableParallel({
         "context": _search_query | retriever,
         "question": RunnablePassthrough(),
-        "reasoning": RunnablePassthrough()  # Add reasoning as part of the final prompt
+        "reasoning": RunnablePassthrough()
     })
     | prompt
     | llm
     | StrOutputParser()
 )
+
 
 # Test example
 if __name__ == "__main__":
