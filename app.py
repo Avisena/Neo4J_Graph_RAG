@@ -1,5 +1,5 @@
 import streamlit as st
-from graph_rag import rag_refine  # replace with your actual script name (without .py)
+from graph_rag import chain  # replace with your actual script name (without .py)
 
 st.set_page_config(page_title="Tacia with Graph", layout="wide")
 st.title("🧠 Tacia with Graph Knowledge")
