@@ -114,7 +114,7 @@ Refine the answer with the new information (or say 'unchanged' if nothing new):"
 )
 
 # Refine chain
-refine_documents_chain = RefineDocumentsChain.from_llm(
+refine_documents_chain = RefineDocumentsChain(
     llm=llm,
     prompt=initial_prompt,
     refine_prompt=refine_prompt,
