@@ -20,6 +20,7 @@ from langchain_community.vectorstores.neo4j_vector import remove_lucene_chars
 from langchain.chains.combine_documents import RefineDocumentsChain
 from langchain_core.output_parsers import StrOutputParser
 from langchain.chains.llm import LLMChain
+from langchain.chains import RefineDocumentsChain, LLMChain
 from dotenv import load_dotenv
 
 # Load environment variables
