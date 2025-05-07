@@ -1,17 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-Enhanced RAG with Neo4j Graph and Refine Chain
+Enhanced RAG with Neo4j Graph and Refine Chain (LangChain >= 0.1.14+)
 """
 
 import os
 import streamlit as st
-from typing import Tuple, List
+from typing import List
 
-from langchain_core.runnables import (
-    RunnableLambda, RunnablePassthrough
-)
+from langchain_core.documents import Document
 from langchain_core.prompts import PromptTemplate
-from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnablePassthrough
 from langchain_community.graphs import Neo4jGraph
 from langchain_community.document_loaders import PDFPlumberLoader
 from langchain_text_splitters import TokenTextSplitter
@@ -19,9 +17,9 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_experimental.graph_transformers import LLMGraphTransformer
 from langchain_community.vectorstores import Neo4jVector
 from langchain_community.vectorstores.neo4j_vector import remove_lucene_chars
-from langchain_core.documents import Document
-from langchain.chains import RefineDocumentsChain
-from langchain_core.prompts import PromptTemplate
+from langchain.chains.combine_documents import RefineDocumentsChain
+from langchain_core.output_parsers import StrOutputParser
+from langchain.chains.llm import LLMChain
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -32,13 +30,7 @@ os.environ["NEO4J_USERNAME"] = st.secrets["NEO4J_USERNAME"]
 os.environ["NEO4J_PASSWORD"] = st.secrets["NEO4J_PASSWORD"]
 
 graph = Neo4jGraph()
-llm = ChatOpenAI(
-    temperature=0.2,
-    top_p=0.85,
-    frequency_penalty=0.3,
-    presence_penalty=0.3,
-    model_name="gpt-4o-mini"
-)
+llm = ChatOpenAI(model_name="gpt-4o-mini", temperature=0.2)
 
 def preprocess_documents(pdf_path: str = "file (77).pdf"):
     loader = PDFPlumberLoader(pdf_path)
@@ -104,6 +96,7 @@ def retriever(question: str) -> List[Document]:
     docs.extend(unstructured_docs)
     return docs
 
+# Refine Prompt Chain
 initial_prompt = PromptTemplate.from_template(
     """You are a legal assistant. Based on the following document, provide a concise answer to the question:
 ----------
@@ -127,15 +120,12 @@ And here's an additional context document:
 Refine the answer with the new information (or say 'unchanged' if nothing new):"""
 )
 
-# Initialize the language model
-llm = ChatOpenAI(model_name="gpt-4o-mini", temperature=0.2)
-
-# Create LLMChain instances
+# Define LLM chains
 initial_llm_chain = LLMChain(llm=llm, prompt=initial_prompt)
 refine_llm_chain = LLMChain(llm=llm, prompt=refine_prompt)
 
-# Create the RefineDocumentsChain
-chain = RefineDocumentsChain(
+# Define RefineDocumentsChain
+refine_chain = RefineDocumentsChain(
     initial_llm_chain=initial_llm_chain,
     refine_llm_chain=refine_llm_chain,
     document_variable_name="context",
@@ -143,12 +133,16 @@ chain = RefineDocumentsChain(
     input_key="input_documents",
     output_key="output_text"
 ).with_config({"verbose": True})
-# Final RAG Logic
+
 def rag_refine(question: str) -> str:
     docs = retriever(question)
-    return refine_chain.invoke({"input_documents": docs, "question": question})
+    result = refine_chain.invoke({
+        "input_documents": docs,
+        "question": question
+    })
+    return result
 
-# Test Run
+# Test run
 if __name__ == "__main__":
     print(rag_refine(
         "Apa alasan diterbitkannya Peraturan Direktur Jenderal Pajak Nomor PER-28/PJ/2018 tentang Surat Keterangan Domisili bagi Subjek Pajak Dalam Negeri Indonesia dalam Rangka Penerapan Persetujuan Penghindaran Pajak Berganda?"
