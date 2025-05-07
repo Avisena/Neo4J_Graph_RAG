@@ -104,37 +104,45 @@ def retriever(question: str) -> List[Document]:
     docs.extend(unstructured_docs)
     return docs
 
-# Refine Chain Prompts
-initial_prompt = PromptTemplate.from_template("""
-You are a legal assistant. Use the following context to begin answering the legal question below:
----
-Context:
+initial_prompt = PromptTemplate.from_template(
+    """You are a legal assistant. Based on the following document, provide a concise answer to the question:
+----------
 {context}
-
-Question:
-{question}
-
-Initial Answer:""")
-
-refine_prompt = PromptTemplate.from_template("""
-You are refining a legal answer. Add to the existing answer only if the new context provides additional useful information.
----
-Existing Answer:
-{existing_answer}
-
-New Context:
-{context}
-
-Refined Answer:""")
-
-# Refine Chain Setup
-chain = RefineDocumentsChain.from_llm(
-    llm=llm,
-    document_prompt=initial_prompt,
-    refine_prompt=refine_prompt,
-    document_variable_name="context"
+----------
+Question: {question}
+Answer:"""
 )
 
+refine_prompt = PromptTemplate.from_template(
+    """You are refining a legal analysis. Here's the existing summary:
+----------
+{existing_answer}
+----------
+
+And here's an additional context document:
+----------
+{context}
+----------
+
+Refine the answer with the new information (or say 'unchanged' if nothing new):"""
+)
+
+# Initialize the language model
+llm = ChatOpenAI(model_name="gpt-4o-mini", temperature=0.2)
+
+# Create LLMChain instances
+initial_llm_chain = LLMChain(llm=llm, prompt=initial_prompt)
+refine_llm_chain = LLMChain(llm=llm, prompt=refine_prompt)
+
+# Create the RefineDocumentsChain
+chain = RefineDocumentsChain(
+    initial_llm_chain=initial_llm_chain,
+    refine_llm_chain=refine_llm_chain,
+    document_variable_name="context",
+    initial_response_name="existing_answer",
+    input_key="input_documents",
+    output_key="output_text"
+).with_config({"verbose": True})
 # Final RAG Logic
 def rag_refine(question: str) -> str:
     docs = retriever(question)
