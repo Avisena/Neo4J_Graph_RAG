@@ -65,22 +65,22 @@ def generate_full_text_query(input: str) -> str:
 def structured_retriever(question: str) -> str:
     result = ""
     response = graph.query(
-        """
-        CALL db.index.fulltext.queryNodes('entity', $query, {limit:10})
-        YIELD node,score
-        CALL {
-          WITH node
-          MATCH (node)-[r:!MENTIONS]->(neighbor)
-          RETURN node.id + ' - ' + type(r) + ' -> ' + neighbor.id AS output
-          UNION ALL
-          WITH node
-          MATCH (node)<-[r:!MENTIONS]-(neighbor)
-          RETURN neighbor.id + ' - ' + type(r) + ' -> ' +  node.id AS output
-        }
-        RETURN output LIMIT 50
-        """,
-        {"query": generate_full_text_query(question)}
-    )
+    """
+    CALL db.index.fulltext.queryNodes('entity', $query, {limit:10})
+    YIELD node,score
+    CALL {
+      WITH node
+      MATCH (node)-[r:!MENTIONS]->(neighbor)
+      RETURN node.id + ' - ' + type(r) + ' -> ' + neighbor.id AS output
+      UNION ALL
+      WITH node
+      MATCH (node)<-[r:!MENTIONS]-(neighbor)
+      RETURN neighbor.id + ' - ' + type(r) + ' -> ' +  node.id AS output
+    }
+    RETURN output LIMIT 50
+    """,
+    {"query": generate_full_text_query(question)}  # question is a string
+)
     result += "\n".join([el['output'] for el in response]) + "\n"
     return result.strip()
 
