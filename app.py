@@ -39,7 +39,7 @@ if submitted and user_input:
         chain_input["chat_history"] = st.session_state.chat_history
 
     # Run the chain
-    response = rag_refine(chain_input)
+    response = chain.invoke(chain_input)
 
     # Update chat history
     st.session_state.chat_history.append((user_input, response))
