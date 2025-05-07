@@ -7,7 +7,7 @@ from langchain_core.documents import Document
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
-from langchain.chains.combine_documents import RefineDocumentsChain
+from langchain.chains import RefineDocumentsChain
 from langchain_community.graphs import Neo4jGraph
 from langchain_community.vectorstores import Neo4jVector
 from langchain_community.vectorstores.neo4j_vector import remove_lucene_chars
