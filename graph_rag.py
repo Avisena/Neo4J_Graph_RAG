@@ -1,27 +1,22 @@
-# -*- coding: utf-8 -*-
-"""
-Enhanced RAG with Neo4j Graph and Refine Chain (LangChain >= 0.1.14+)
-"""
-
 import os
 import streamlit as st
 from typing import List
 
-from langchain_core.documents import Document
+from dotenv import load_dotenv
 from langchain_core.prompts import PromptTemplate
-from langchain_core.runnables import RunnablePassthrough
+from langchain_core.runnables import RunnableLambda, RunnablePassthrough
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.documents import Document
+
 from langchain_community.graphs import Neo4jGraph
-from langchain_community.document_loaders import PDFPlumberLoader
-from langchain_text_splitters import TokenTextSplitter
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from langchain_experimental.graph_transformers import LLMGraphTransformer
 from langchain_community.vectorstores import Neo4jVector
 from langchain_community.vectorstores.neo4j_vector import remove_lucene_chars
-from langchain.chains.combine_documents import RefineDocumentsChain
-from langchain_core.output_parsers import StrOutputParser
-from langchain.chains.llm import LLMChain
-from langchain.chains import RefineDocumentsChain, LLMChain
-from dotenv import load_dotenv
+from langchain_community.document_loaders import PDFPlumberLoader
+from langchain_text_splitters import TokenTextSplitter
+
+from langchain_experimental.graph_transformers import LLMGraphTransformer
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain.chains import LLMChain
 
 # Load environment variables
 load_dotenv(override=True)
@@ -31,7 +26,7 @@ os.environ["NEO4J_USERNAME"] = st.secrets["NEO4J_USERNAME"]
 os.environ["NEO4J_PASSWORD"] = st.secrets["NEO4J_PASSWORD"]
 
 graph = Neo4jGraph()
-llm = ChatOpenAI(model_name="gpt-4o-mini", temperature=0.2)
+llm = ChatOpenAI(temperature=0.2, model_name="gpt-4o-mini")
 
 def preprocess_documents(pdf_path: str = "file (77).pdf"):
     loader = PDFPlumberLoader(pdf_path)
@@ -92,12 +87,11 @@ def structured_retriever(question: str) -> str:
 def retriever(question: str) -> List[Document]:
     structured_data = structured_retriever(question)
     unstructured_docs = vector_index.similarity_search(question)
-
     docs = [Document(page_content=f"Structured data:\n{structured_data}", metadata={"source": "graph"})]
     docs.extend(unstructured_docs)
     return docs
 
-# Refine Prompt Chain
+# Prompt templates
 initial_prompt = PromptTemplate.from_template(
     """You are a legal assistant. Based on the following document, provide a concise answer to the question:
 ----------
@@ -112,39 +106,43 @@ refine_prompt = PromptTemplate.from_template(
 ----------
 {existing_answer}
 ----------
-
 And here's an additional context document:
 ----------
 {context}
 ----------
-
 Refine the answer with the new information (or say 'unchanged' if nothing new):"""
 )
 
-# Define LLM chains
-initial_llm_chain = LLMChain(llm=llm, prompt=initial_prompt)
-refine_llm_chain = LLMChain(llm=llm, prompt=refine_prompt)
+# Chains
+initial_chain = LLMChain(llm=llm, prompt=initial_prompt)
+refine_chain = LLMChain(llm=llm, prompt=refine_prompt)
 
-# Define RefineDocumentsChain
-refine_chain = RefineDocumentsChain(
-    initial_llm_chain=initial_llm_chain,
-    refine_llm_chain=refine_llm_chain,
-    document_variable_name="context",
-    initial_response_name="existing_answer",
-    input_key="input_documents",
-    output_key="output_text"
-).with_config({"verbose": True})
+def refine_documents_chain(input_documents: List[Document], question: str) -> str:
+    context_docs = [doc.page_content for doc in input_documents]
 
-def rag_refine(question: str) -> str:
-    docs = retriever(question)
-    result = refine_chain.invoke({
-        "input_documents": docs,
+    # Step 1: Initial response with first document
+    current_answer = initial_chain.run({
+        "context": context_docs[0],
         "question": question
     })
-    return result
 
-# Test run
+    # Step 2: Refine with each remaining document
+    for context in context_docs[1:]:
+        current_answer = refine_chain.run({
+            "existing_answer": current_answer,
+            "context": context
+        })
+
+    return current_answer
+
+# Final RAG logic
+def rag_refine(question: str) -> str:
+    docs = retriever(question)
+    return refine_documents_chain(docs, question)
+
+# Run for testing
 if __name__ == "__main__":
-    print(rag_refine(
+    answer = rag_refine(
         "Apa alasan diterbitkannya Peraturan Direktur Jenderal Pajak Nomor PER-28/PJ/2018 tentang Surat Keterangan Domisili bagi Subjek Pajak Dalam Negeri Indonesia dalam Rangka Penerapan Persetujuan Penghindaran Pajak Berganda?"
-    ))
+    )
+    print(answer)
