@@ -99,15 +99,17 @@ COT_PROMPT = ChatPromptTemplate.from_messages([
      "Step-by-step legal reasoning and final answer:")
 ])
 
-QUERY_EXPANSION_PROMPT = PromptTemplate.from_template(
-    """You are a legal assistant tasked with expanding queries for better search results.
-Original question: {question}
-Expand this into related phrases, synonyms, and alternative phrasings useful for retrieval in legal databases:
-Expanded query (comma-separated):"""
+expand_prompt = PromptTemplate.from_template(
+    "Generate 3 diverse paraphrased versions of the following legal query:\n\n{question}"
 )
 
 entity_chain = COT_PROMPT | llm.with_structured_output(Entities)
-query_expander = QUERY_EXPANSION_PROMPT | llm | StrOutputParser()
+query_expander = expand_prompt | llm | StrOutputParser()
+
+def expanded_queries(original_query: str) -> List[str]:
+    raw_output = query_expander.invoke({"question": original_query})
+    queries = [q.strip("-• ").strip() for q in raw_output.split("\n") if q.strip()]
+    return [original_query] + queries  # include original query
 
 def generate_full_text_query(input: str) -> str:
     words = [el for el in remove_lucene_chars(input).split() if el]
