@@ -141,7 +141,7 @@ def retriever(question: str):
     # Expand query
     expanded_query = query_expander.invoke({"question": question})
     expanded_variants = [q.strip() for q in expanded_query.split(",") if q.strip()]
-    
+    print(expanded_variants)
     # Collect structured and unstructured results from all variants
     structured_results, unstructured_results = [], []
 
