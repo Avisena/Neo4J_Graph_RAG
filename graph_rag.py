@@ -138,21 +138,34 @@ def structured_retriever(question: str) -> str:
     return result.strip()
 
 def retriever(question: str):
-    # Expand query
-    expanded_query = query_expander.invoke({"question": question})
-    expanded_variants = [q.strip() for q in expanded_query.split(",") if q.strip()]
-    print(expanded_variants)
-    # Collect structured and unstructured results from all variants
-    structured_results, unstructured_results = [], []
-
-    for variant in expanded_variants:
-        structured = structured_retriever(variant)
-        structured_results.append(f"## From variant: {variant}\n{structured}")
-        
-        unstructured_docs = vector_index.similarity_search(variant)
-        unstructured_results.extend([f"#Document {doc.page_content}" for doc in unstructured_docs])
+    queries = expanded_queries(question)
     
-    return f"Structured data:\n{chr(10).join(structured_results)}\n\nUnstructured data:\n{chr(10).join(unstructured_results)}"
+    # Structured retrieval
+    structured_docs = set()
+    for q in queries:
+        try:
+            docs = structured_retriever(q)
+            for line in docs.splitlines():
+                structured_docs.add(line.strip())
+        except Exception as e:
+            print(f"Error retrieving structured docs for query '{q}': {e}")
+
+    # Unstructured retrieval (vector DB)
+    unstructured_docs = set()
+    for q in queries:
+        try:
+            results = vector_index.similarity_search(q)
+            for doc in results:
+                unstructured_docs.add(doc.page_content.strip())
+        except Exception as e:
+            print(f"Error retrieving unstructured docs for query '{q}': {e}")
+
+    # Combine and format results
+    structured_data = "\n".join(structured_docs)
+    unstructured_data = "\n#Document ".join(unstructured_docs)
+
+    return f"Structured data:\n{structured_data}\nUnstructured data:\n#Document {unstructured_data}"
+
 
 
 # Condense follow-up questions
