@@ -128,7 +128,7 @@ New Context:
 Refined Answer:""")
 
 # Refine Chain Setup
-refine_chain = RefineDocumentsChain.from_llm(
+chain = RefineDocumentsChain.from_llm(
     llm=llm,
     document_prompt=initial_prompt,
     refine_prompt=refine_prompt,
