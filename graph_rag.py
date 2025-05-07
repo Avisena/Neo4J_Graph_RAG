@@ -21,7 +21,7 @@ from langchain_community.vectorstores import Neo4jVector
 from langchain_community.vectorstores.neo4j_vector import remove_lucene_chars
 from langchain_core.documents import Document
 from langchain.chains import RefineDocumentsChain
-from langchain.chains.combine_documents.refine import RefinePrompt
+from langchain_core.prompts import PromptTemplate
 from dotenv import load_dotenv
 
 # Load environment variables
