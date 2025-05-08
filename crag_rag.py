@@ -13,7 +13,7 @@ from langchain.tools import DuckDuckGoSearchResults
 
 # Original path append replaced for Colab compatibility
 from helper_functions import *
-from evalute_rag import *
+# from evalute_rag import *
 
 # Load environment variables from a .env file
 # Load environment variables from a .env file
