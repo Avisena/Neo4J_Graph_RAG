@@ -1,6 +1,6 @@
 import streamlit as st
-from graph_rag import chain  # replace with your actual script name (without .py)
-from crag_rag import crag_process
+# from graph_rag import chain  # replace with your actual script name (without .py)
+from crag_runnable import CRAG
 
 st.set_page_config(page_title="Tacia with Graph", layout="wide")
 st.title("🧠 Tacia with Graph Knowledge")
@@ -40,18 +40,20 @@ if submitted and user_input:
         chain_input["chat_history"] = st.session_state.chat_history
 
     # Run the chain
-    response = crag_process(user_input)
+    crag = CRAG()
+    response = crag.run(user_input)
 
     # Update chat history
     st.session_state.chat_history.append((user_input, response))
 
 # Display conversation history
 st.markdown("### 💬 Chat History")
-for i, (user_q, bot_a) in enumerate(st.session_state.chat_history):
+for i, (user_q, bot_a) in enumerate(reversed(st.session_state.chat_history)):
     with st.chat_message("user", avatar="👤"):
         st.markdown(user_q)
     with st.chat_message("assistant", avatar="🤖"):
         st.markdown(bot_a)
+
 
 
 # Option to clear chat
