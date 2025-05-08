@@ -4,6 +4,7 @@ import argparse
 import streamlit as st
 from dotenv import load_dotenv
 from langchain.prompts import PromptTemplate
+from sentence_transformers import CrossEncoder
 from langchain_openai import ChatOpenAI
 from langchain_core.pydantic_v1 import BaseModel, Field
 from langchain.tools import DuckDuckGoSearchResults
@@ -85,9 +86,37 @@ class CRAG:
         self.search = DuckDuckGoSearchResults()
 
     @staticmethod
-    def retrieve_documents(query, faiss_index, k=3):
-        docs = faiss_index.similarity_search(query, k=k)
-        return [doc.page_content for doc in docs]
+    def retrieve_documents(question, vstore, k=3):
+        """
+        Retrieve documents based on a query using a FAISS index.
+
+        Args:
+            query (str): The query string to search for.
+            faiss_index (FAISS): The FAISS index used for similarity search.
+            k (int): The number of top documents to retrieve. Defaults to 3.
+
+        Returns:
+            List[str]: A list of the retrieved document contents.
+        """
+        unstructured_docs = set()
+        results = vstore.similarity_search(question)
+
+        for doc in results:
+            unstructured_docs.add(doc.page_content.strip())
+
+        # Step 2: Convert to list
+        unstructured_docs = list(unstructured_docs)
+
+        # Step 3: Rerank using a cross-encoder (optional)
+        pairs = [(question, doc) for doc in unstructured_docs]
+        scores = reranker.predict(pairs)  # assumes reranker is defined globally
+
+        # Step 4: Sort by descending score
+        reranked_docs = [doc for _, doc in sorted(zip(scores, unstructured_docs), key=lambda x: -x[0])]
+
+        # Step 5: Return List[str]
+        print(reranked_docs)
+        return reranked_docs
 
     def evaluate_documents(self, query, documents):
         return [self.retrieval_evaluator(query, doc) for doc in documents]
