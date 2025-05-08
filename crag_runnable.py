@@ -25,6 +25,8 @@ os.environ["NEO4J_USERNAME"] = st.secrets["NEO4J_USERNAME"]
 os.environ["NEO4J_PASSWORD"] = st.secrets["NEO4J_PASSWORD"]
 GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
 
+reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+
 class RetrievalEvaluatorInput(BaseModel):
     """
     Model for capturing the relevance score of a document to a query.
