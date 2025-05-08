@@ -6,7 +6,7 @@ langchain-openai
 langchain-groq
 langchain-core
 langchain-experimental
-pydantic==1.10.13  # LangChain compatibility
+pydantic
 neo4j
 pdfplumber
 python-dotenv
