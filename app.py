@@ -52,7 +52,11 @@ for i, (user_q, bot_a) in enumerate(reversed(st.session_state.chat_history)):
     with st.chat_message("user", avatar="👤"):
         st.markdown(user_q)
     with st.chat_message("assistant", avatar="🤖"):
-        st.markdown(bot_a)
+        try:
+            st.latex(bot_a)
+        except:
+            st.markdown(bot_a)
+
 
 
 
