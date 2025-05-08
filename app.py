@@ -1,5 +1,6 @@
 import streamlit as st
 from graph_rag import chain  # replace with your actual script name (without .py)
+from crag_rag import crag_process
 
 st.set_page_config(page_title="Tacia with Graph", layout="wide")
 st.title("🧠 Tacia with Graph Knowledge")
@@ -34,12 +35,12 @@ with st.form("chat_form", clear_on_submit=True):
 
 if submitted and user_input:
     # Prepare input for the chain
-    chain_input = {"question": user_input}
+    chain_input = {"input": user_input}
     if st.session_state.chat_history:
         chain_input["chat_history"] = st.session_state.chat_history
 
     # Run the chain
-    response = chain.invoke(chain_input)
+    response = crag_process(user_input)
 
     # Update chat history
     st.session_state.chat_history.append((user_input, response))

@@ -11,3 +11,9 @@ neo4j
 pdfplumber
 python-dotenv
 tiktoken
+rank_bm25 
+fitz 
+tools 
+deepeval 
+pypdf 
+duckduckgo-search
