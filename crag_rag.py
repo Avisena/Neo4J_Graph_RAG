@@ -83,7 +83,7 @@ def rewrite_query(query: str) -> str:
 
 
 
-def parse_search_results(results_string: str) -> List[Tuple[str, str]]:
+def parse_search_results(results_string: str):
     """
     Parse a JSON string of search results into a list of title-link tuples.
 
@@ -147,7 +147,7 @@ def evaluate_documents(query: str, documents: List[str]) -> List[float]:
     """
     return [retrieval_evaluator(query, doc) for doc in documents]
 
-def perform_web_search(query: str) -> Tuple[List[str], List[Tuple[str, str]]]:
+def perform_web_search(query: str):
     """
     Perform a web search based on a query.
 
@@ -165,7 +165,7 @@ def perform_web_search(query: str) -> Tuple[List[str], List[Tuple[str, str]]]:
     sources = parse_search_results(web_results)
     return web_knowledge, sources
 
-def generate_response(query: str, knowledge: str, sources: List[Tuple[str, str]]) -> str:
+def generate_response(query: str, knowledge: str, sources):
     """
     Generate a response to a query using knowledge and sources.
 
