@@ -12,7 +12,7 @@ pdfplumber
 python-dotenv
 tiktoken
 rank_bm25 
-fitz 
+PyMuPDF 
 tools 
 deepeval 
 pypdf 
