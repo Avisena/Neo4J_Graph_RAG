@@ -88,7 +88,7 @@ class CRAG:
         self.search = DuckDuckGoSearchResults()
 
     @staticmethod
-    def retrieve_documents(question, vstore, k=3):
+    def retrieve_documents(question, vstore, k=20):
         """
         Retrieve documents based on a query using a FAISS index.
 
@@ -101,7 +101,7 @@ class CRAG:
             List[str]: A list of the retrieved document contents.
         """
         unstructured_docs = set()
-        results = vstore.similarity_search(question)
+        results = vstore.similarity_search(question, k=k)
 
         for doc in results:
             unstructured_docs.add(doc.page_content.strip())
@@ -113,8 +113,8 @@ class CRAG:
         pairs = [(question, doc) for doc in unstructured_docs]
         scores = reranker.predict(pairs)  # assumes reranker is defined globally
 
-        # Step 4: Sort by descending score
-        reranked_docs = [doc for _, doc in sorted(zip(scores, unstructured_docs), key=lambda x: -x[0])]
+        # Step 4: Sort by descending score and take top 5
+        reranked_docs = [doc for _, doc in sorted(zip(scores, unstructured_docs), key=lambda x: -x[0])][:10]
 
         # Step 5: Return List[str]
         print(reranked_docs)
