@@ -9,7 +9,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.pydantic_v1 import BaseModel, Field
 from langchain.tools import DuckDuckGoSearchResults
 from langchain_openai import ChatOpenAI
-from langchain_community.vectorstores import Neo4jVector
+from langchain_community.vectorstores import Neo4jVector, Chroma, AstraDB
 from helper_functions import encode_pdf
 from langchain_openai import OpenAIEmbeddings
 import json
@@ -23,9 +23,11 @@ os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
 os.environ["NEO4J_URI"] = st.secrets["NEO4J_URI"]
 os.environ["NEO4J_USERNAME"] = st.secrets["NEO4J_USERNAME"]
 os.environ["NEO4J_PASSWORD"] = st.secrets["NEO4J_PASSWORD"]
+
 GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
 
 reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+vectorstore_dir = "chroma_db"
 
 class RetrievalEvaluatorInput(BaseModel):
     """
@@ -80,6 +82,12 @@ class CRAG:
             text_node_properties=["text"],
             embedding_node_property="embedding"
         )
+        self.vector_store_astra = AstraDB(
+            embedding=OpenAIEmbeddings(),
+            collection_name="enforcea_tax", 
+            api_endpoint="https://4db977cb-ea15-4f3d-b94f-32d5823e8d0b-us-east-2.apps.astra.datastax.com",
+            token="AstraCS:iZFFdgOnZljUUBPikZYPbLbO:5be8829f4cf7a3cecd40ba40bd19d7ddf9158a3f5b85cface8b415a1b575d27a"
+        )
 
         # Initialize OpenAI language model
         self.llm = ChatOpenAI(model=model, max_tokens=max_tokens, temperature=temperature)
@@ -102,7 +110,7 @@ class CRAG:
         """
         unstructured_docs = set()
         results = vstore.similarity_search(question, k=k)
-
+        print(results)
         for doc in results:
             unstructured_docs.add(doc.page_content.strip())
 
@@ -189,7 +197,7 @@ class CRAG:
         print(f"\nProcessing query: {query}")
 
         # Retrieve and evaluate documents
-        retrieved_docs = self.retrieve_documents(query, self.vectorstore)
+        retrieved_docs = self.retrieve_documents(query, self.vector_store_astra)
         eval_scores = self.evaluate_documents(query, retrieved_docs)
 
         print(f"\nRetrieved {len(retrieved_docs)} documents")
@@ -262,7 +270,6 @@ def parse_args():
 def main(args):
     # Initialize the CRAG process
     crag = CRAG(
-        path=args.path,
         model=args.model,
         max_tokens=args.max_tokens,
         temperature=args.temperature,
