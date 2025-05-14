@@ -19,3 +19,4 @@ pypdf
 duckduckgo-search
 sentence_transformers
 astrapy
+cassio
