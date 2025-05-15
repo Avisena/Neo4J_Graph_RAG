@@ -6,6 +6,7 @@ langchain-openai
 langchain-groq
 langchain-core
 langchain-experimental
+langchain_astradb
 pydantic
 neo4j
 pdfplumber
