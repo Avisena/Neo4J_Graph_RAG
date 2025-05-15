@@ -72,7 +72,7 @@ class CRAG:
     A class to handle the CRAG process for document retrieval, evaluation, and knowledge refinement.
     """
 
-    def __init__(self, model="gpt-4o-mini", max_tokens=1000, temperature=0, lower_threshold=0.3,
+    def __init__(self, model="gpt-4o-mini", max_tokens=1000, temperature=0, lower_threshold=0,
                  upper_threshold=0.7):
         """
         Initializes the CRAG Retriever by encoding the PDF document and creating the necessary models and search tools.
