@@ -18,5 +18,5 @@ deepeval
 pypdf 
 duckduckgo-search
 sentence_transformers
-astrapy
-cassio
+langchain_pinecone
+pinecone
