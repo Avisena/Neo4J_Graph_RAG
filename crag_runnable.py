@@ -147,7 +147,7 @@ class CRAG:
         reranked_docs = [doc for _, doc in sorted(zip(scores, unstructured_docs), key=lambda x: -x[0])][:10]
 
         # Step 5: Return List[str]
-        print(reranked_docs)
+        print(f"RERANKED DOCS: {reranked_docs}")
         return reranked_docs
 
     def evaluate_documents(self, query, documents):
@@ -233,7 +233,7 @@ class CRAG:
         if max_score > self.upper_threshold:
             print("\nAction: Correct - Using retrieved document")
             best_doc = retrieved_docs[eval_scores.index(max_score)]
-            final_knowledge = best_doc
+            final_knowledge = retrieved_docs
             sources.append(("Retrieved document", ""))
         elif max_score < self.lower_threshold:
             print("\nAction: Incorrect - Performing web search")
@@ -241,7 +241,7 @@ class CRAG:
         else:
             print("\nAction: Ambiguous - Combining retrieved document and web search")
             best_doc = retrieved_docs[eval_scores.index(max_score)]
-            retrieved_knowledge = self.knowledge_refinement(best_doc)
+            retrieved_knowledge = self.knowledge_refinement(retrieved_docs)
             web_knowledge, web_sources = self.perform_web_search(query)
             final_knowledge = "\n".join(retrieved_knowledge + web_knowledge)
             sources = [("Retrieved document", "")] + web_sources
