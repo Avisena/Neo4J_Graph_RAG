@@ -205,8 +205,8 @@ class CRAG:
         response_prompt = PromptTemplate(
             input_variables=["query", "knowledge", "sources"],
             template="Based on the following knowledge, answer the query. "
-                     "Include the sources with their links (if available) at the end of your answer:"
-                     "\nQuery: {query}\nKnowledge: {knowledge}\nSources: {sources}\nAnswer:"
+                     "Include the References with their links (if available) at the end of your answer:"
+                     "\nQuery: {query}\nKnowledge: {knowledge}\nReferences: {sources}\nAnswer:"
         )
         input_variables = {
             "query": query,
