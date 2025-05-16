@@ -24,7 +24,6 @@ from helper_functions import encode_pdf
 from langchain_openai import OpenAIEmbeddings
 from langchain_pinecone import PineconeVectorStore
 from pinecone import Pinecone, ServerlessSpec
-from exa_py import Exa
 import json
 
 sys.path.append(os.path.abspath(
@@ -37,8 +36,6 @@ os.environ["NEO4J_URI"] = st.secrets["NEO4J_URI"]
 os.environ["NEO4J_USERNAME"] = st.secrets["NEO4J_USERNAME"]
 os.environ["NEO4J_PASSWORD"] = st.secrets["NEO4J_PASSWORD"]
 os.environ["PINECONE_API_KEY"] = st.secrets["PINECONE_API_KEY"]
-
-exa = Exa(api_key="c8f98386-429b-4c92-8580-bfdd2099c256")
 
 
 index_name = "tacia"
