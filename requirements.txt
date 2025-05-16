@@ -17,7 +17,7 @@ PyMuPDF
 tools 
 deepeval 
 pypdf 
-duckduckgo-search
+duckduckgo-search == 8.0.2
 sentence_transformers
 langchain_pinecone
 pinecone
