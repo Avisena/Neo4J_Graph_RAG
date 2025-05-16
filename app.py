@@ -35,13 +35,14 @@ with st.form("chat_form", clear_on_submit=True):
 
 if submitted and user_input:
     # Prepare input for the chain
-    chain_input = {"input": user_input}
+    chain_input = {"question": user_input}
     if st.session_state.chat_history:
         chain_input["chat_history"] = st.session_state.chat_history
 
     # Run the chain
     crag = CRAG()
-    response = crag.run(user_input)
+    print(f"CHAIN INPUT: {chain_input}")
+    response = crag.run(chain_input)
 
     # Update chat history
     st.session_state.chat_history.append((user_input, response))
