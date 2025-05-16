@@ -9,6 +9,7 @@ from langchain_core.runnables import (
     RunnableBranch, RunnableLambda, RunnableParallel, RunnablePassthrough
 )
 from langchain_core.messages import AIMessage, HumanMessage
+from langchain_groq import ChatGroq
 from dotenv import load_dotenv
 from langchain.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
@@ -24,6 +25,7 @@ from helper_functions import encode_pdf
 from langchain_openai import OpenAIEmbeddings
 from langchain_pinecone import PineconeVectorStore
 from pinecone import Pinecone, ServerlessSpec
+from exa_py import Exa
 import json
 
 sys.path.append(os.path.abspath(
@@ -36,6 +38,8 @@ os.environ["NEO4J_URI"] = st.secrets["NEO4J_URI"]
 os.environ["NEO4J_USERNAME"] = st.secrets["NEO4J_USERNAME"]
 os.environ["NEO4J_PASSWORD"] = st.secrets["NEO4J_PASSWORD"]
 os.environ["PINECONE_API_KEY"] = st.secrets["PINECONE_API_KEY"]
+
+exa = Exa(api_key="c8f98386-429b-4c92-8580-bfdd2099c256")
 
 
 index_name = "tacia"
@@ -122,7 +126,8 @@ class CRAG:
 
         # Initialize OpenAI language model
         self.llm = ChatOpenAI(model=model, max_tokens=max_tokens, temperature=temperature)
-
+        # chat_groq = ChatGroq(temperature=0.9, groq_api_key=GROQ_API_KEY, model_name="deepseek-r1-distill-llama-70b")
+        # self.llm = chat_groq.with_structured_output(include_raw=True)
         # Initialize search tool
         self.search = DuckDuckGoSearchResults()
         self.search_searx = SearxSearchWrapper(searx_host="http://127.0.0.1:8888")
@@ -227,7 +232,6 @@ class CRAG:
         return response_chain.invoke(input_variables).content
 
     def run(self, input_data):
-        print(input_data)
         CONDENSE_QUESTION_PROMPT = PromptTemplate(
             input_variables=["chat_history", "question"],
             template="""
@@ -258,8 +262,8 @@ class CRAG:
             RunnableLambda(lambda x: x["question"]),
         )
         processed_query = preprocess_chain.invoke(input_data)
+        print(f"REFORMULATED MEMORY: {processed_query}")
         final_response = self.run_context(processed_query)
-        print(final_response)
         return final_response
 
 
