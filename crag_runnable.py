@@ -220,7 +220,7 @@ class CRAG:
         response_prompt = PromptTemplate(
             input_variables=["query", "knowledge", "sources"],
             template="Berdasarkan pengetahuan berikut, jawablah pertanyaan."
-                    "Sertakan Referensi beserta tautannya (jika tersedia) di akhir jawaban Anda:"
+                    "Sertakan Referensi beserta tautannya (jika dari dokumen, sertakan nama filenya) di akhir jawaban Anda:"
                     "\nPertanyaan: {query}\nPengetahuan: {knowledge}\nReferensi: {sources}\nJawaban:"
         )
         input_variables = {
@@ -241,7 +241,11 @@ class CRAG:
         Pertanyaan saat ini:
         {question}
 
-        Reformulasikan pertanyaan agar berdiri sendiri, berdasarkan riwayat percakapan di atas.
+        Tugas Anda adalah memeriksa apakah pertanyaan saat ini adalah lanjutan dari riwayat percakapan.
+        - Jika **YA**, reformulasikan pertanyaan agar berdiri sendiri.
+        - Jika **TIDAK**, kembalikan pertanyaan apa adanya tanpa perubahan.
+
+        Berikan hanya satu pertanyaan akhir sebagai hasil.
         """,
         )
 
