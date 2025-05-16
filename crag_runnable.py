@@ -2,12 +2,21 @@ import os
 import sys
 import argparse
 import streamlit as st
+
+from typing import Tuple, List
+
+from langchain_core.runnables import (
+    RunnableBranch, RunnableLambda, RunnableParallel, RunnablePassthrough
+)
+from langchain_core.messages import AIMessage, HumanMessage
 from dotenv import load_dotenv
 from langchain.prompts import PromptTemplate
+from langchain_core.output_parsers import StrOutputParser
 from sentence_transformers import CrossEncoder
 from langchain_openai import ChatOpenAI
 from langchain_core.pydantic_v1 import BaseModel, Field
 from langchain.tools import DuckDuckGoSearchResults
+from langchain_community.utilities import SearxSearchWrapper
 from langchain_openai import ChatOpenAI
 from langchain_community.vectorstores import Neo4jVector, Chroma, AstraDB
 from langchain_astradb import AstraDBVectorStore
@@ -15,6 +24,7 @@ from helper_functions import encode_pdf
 from langchain_openai import OpenAIEmbeddings
 from langchain_pinecone import PineconeVectorStore
 from pinecone import Pinecone, ServerlessSpec
+from exa_py import Exa
 import json
 
 sys.path.append(os.path.abspath(
@@ -27,6 +37,8 @@ os.environ["NEO4J_URI"] = st.secrets["NEO4J_URI"]
 os.environ["NEO4J_USERNAME"] = st.secrets["NEO4J_USERNAME"]
 os.environ["NEO4J_PASSWORD"] = st.secrets["NEO4J_PASSWORD"]
 os.environ["PINECONE_API_KEY"] = st.secrets["PINECONE_API_KEY"]
+
+exa = Exa(api_key="c8f98386-429b-4c92-8580-bfdd2099c256")
 
 
 index_name = "tacia"
@@ -72,7 +84,7 @@ class CRAG:
     A class to handle the CRAG process for document retrieval, evaluation, and knowledge refinement.
     """
 
-    def __init__(self, model="gpt-4o-mini", max_tokens=1000, temperature=0, lower_threshold=0.3,
+    def __init__(self, model="gpt-4o-mini", max_tokens=1000, temperature=0.7, lower_threshold=0.3,
                  upper_threshold=0.7):
         """
         Initializes the CRAG Retriever by encoding the PDF document and creating the necessary models and search tools.
@@ -116,6 +128,7 @@ class CRAG:
 
         # Initialize search tool
         self.search = DuckDuckGoSearchResults()
+        self.search_searx = SearxSearchWrapper(searx_host="http://127.0.0.1:8888")
 
     @staticmethod
     def retrieve_documents(question, vstore, k=20):
@@ -156,8 +169,8 @@ class CRAG:
     def retrieval_evaluator(self, query, document):
         prompt = PromptTemplate(
             input_variables=["query", "document"],
-            template="On a scale from 0 to 1, how relevant is the following document to the query? "
-                     "Query: {query}\nDocument: {document}\nRelevance score:"
+            template="Dalam skala dari 0 hingga 1, seberapa relevan dokumen berikut terhadap pertanyaan?"
+                     "Pertanyaan: {query}\nDokumen: {document}\nSkor relevansi:"
         )
         chain = prompt | self.llm.with_structured_output(RetrievalEvaluatorInput)
         input_variables = {"query": query, "document": document}
@@ -167,8 +180,8 @@ class CRAG:
     def knowledge_refinement(self, document):
         prompt = PromptTemplate(
             input_variables=["document"],
-            template="Extract the key information from the following document in bullet points:"
-                     "\n{document}\nKey points:"
+            template="Ekstrak informasi penting dari dokumen berikut dalam bentuk poin-poin:"
+                     "\n{document}\nPoin-poin penting:"
         )
         chain = prompt | self.llm.with_structured_output(KnowledgeRefinementInput)
         input_variables = {"document": document}
@@ -204,9 +217,9 @@ class CRAG:
     def generate_response(self, query, knowledge, sources):
         response_prompt = PromptTemplate(
             input_variables=["query", "knowledge", "sources"],
-            template="Based on the following knowledge, answer the query. "
-                     "Include the References with their links (if available) at the end of your answer:"
-                     "\nQuery: {query}\nKnowledge: {knowledge}\nReferences: {sources}\nAnswer:"
+            template="Berdasarkan pengetahuan berikut, jawablah pertanyaan."
+                    "Sertakan Referensi beserta tautannya (jika tersedia) di akhir jawaban Anda:"
+                    "\nPertanyaan: {query}\nPengetahuan: {knowledge}\nReferensi: {sources}\nJawaban:"
         )
         input_variables = {
             "query": query,
@@ -216,7 +229,45 @@ class CRAG:
         response_chain = response_prompt | self.llm
         return response_chain.invoke(input_variables).content
 
-    def run(self, query):
+    def run(self, input_data):
+        print(input_data)
+        CONDENSE_QUESTION_PROMPT = PromptTemplate(
+            input_variables=["chat_history", "question"],
+            template="""
+        Riwayat percakapan:
+        {chat_history}
+
+        Pertanyaan saat ini:
+        {question}
+
+        Reformulasikan pertanyaan agar berdiri sendiri, berdasarkan riwayat percakapan di atas.
+        """,
+        )
+
+        def _format_chat_history(chat_history):
+            return "\n".join([f"User: {q}\nAI: {a}" for q, a in chat_history])
+
+        preprocess_chain = RunnableBranch(
+            (
+                RunnableLambda(lambda x: bool(x.get("chat_history"))),
+                RunnablePassthrough.assign(
+                    chat_history=lambda x: _format_chat_history(x["chat_history"])
+                )
+                | CONDENSE_QUESTION_PROMPT
+                | self.llm
+                | StrOutputParser()
+            ),
+            # Else: return original question
+            RunnableLambda(lambda x: x["question"]),
+        )
+        processed_query = preprocess_chain.invoke(input_data)
+        final_response = self.run_context(processed_query)
+        print(final_response)
+        return final_response
+
+
+
+    def run_context(self, query):
         print(f"\nProcessing query: {query}")
 
         # Retrieve and evaluate documents
