@@ -38,7 +38,7 @@ os.environ["NEO4J_USERNAME"] = st.secrets["NEO4J_USERNAME"]
 os.environ["NEO4J_PASSWORD"] = st.secrets["NEO4J_PASSWORD"]
 os.environ["PINECONE_API_KEY"] = st.secrets["PINECONE_API_KEY"]
 
-index_name = "tacia2"
+index_name = "tacia"
 pc = Pinecone()
 if index_name not in pc.list_indexes().names():
     pc.create_index(
@@ -116,7 +116,7 @@ class CRAG:
 
         self.pinecone_vector_store = PineconeVectorStore(
             index=index,             # This is the Pinecone index handle
-            embedding=OpenAIEmbeddings(model="text-embedding-3-small"),     # OpenAI embeddings
+            embedding=OpenAIEmbeddings(),     # OpenAI embeddings
             text_key="text"          # Make sure you use the same key used when storing text
         )
 
