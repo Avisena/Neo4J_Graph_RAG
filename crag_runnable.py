@@ -236,7 +236,7 @@ class CRAG:
         Kamu adalah konsultan pajak. Kamu menerima pertanyaan dari klien sebagai berikut:
         Pertanyaan: {question}
 
-        Jawaban konsultan pajak sebelumnya:
+        Jawabanmu sebelumnya:
         {existing_answer}
 
         Lalu kamu membuka buku untuk mencari informasi lebih lanjut. Informasi yang kamu dapatkan:
@@ -244,7 +244,7 @@ class CRAG:
         {refined_knowledge}
         
         Dengan mempertimbangkan informasi tambahan ini, revisi jawaban sebelumnya jika perlu. Berikan jawaban hukum yang sangat mendetail disertai dasar hukumnya.
-        Jika tidak perlu perubahan, ulangi jawaban dari konsultan pajak sebelumnya.
+        Jika tidak perlu perubahan, ulangi jawabanmu sebelumnya.
         """
         )
 
