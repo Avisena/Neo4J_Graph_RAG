@@ -147,7 +147,7 @@ class CRAG:
             search_type="similarity_score_threshold", search_kwargs={"score_threshold": 0.7}
         )
         # results = retriever.invoke(question)
-        results = vstore.similarity_search(question, k=5)
+        results = vstore.similarity_search(question, k=3)
         # print(results)
         for doc in results:
             unstructured_docs.add(doc.page_content.strip())
