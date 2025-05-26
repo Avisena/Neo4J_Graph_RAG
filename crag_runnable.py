@@ -12,6 +12,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain_groq import ChatGroq
 from dotenv import load_dotenv
 from langchain.prompts import PromptTemplate
+from langchain.chains.question_answering import load_qa_chain
 from langchain_core.output_parsers import StrOutputParser
 from sentence_transformers import CrossEncoder
 from langchain_openai import ChatOpenAI
@@ -81,7 +82,7 @@ class CRAG:
     A class to handle the CRAG process for document retrieval, evaluation, and knowledge refinement.
     """
 
-    def __init__(self, model="gpt-4o-mini", max_tokens=1000, temperature=0.7, lower_threshold=0.3,
+    def __init__(self, model="gpt-4o-mini", max_tokens=1000, temperature=0.7, lower_threshold=0.6,
                  upper_threshold=0.7):
         """
         Initializes the CRAG Retriever by encoding the PDF document and creating the necessary models and search tools.
@@ -142,8 +143,12 @@ class CRAG:
             List[str]: A list of the retrieved document contents.
         """
         unstructured_docs = set()
-        results = vstore.similarity_search(question, k=k)
-        print(results)
+        retriever = vstore.as_retriever(
+            search_type="similarity_score_threshold", search_kwargs={"score_threshold": 0.7}
+        )
+        # results = retriever.invoke(question)
+        results = vstore.similarity_search(question, k=5)
+        # print(results)
         for doc in results:
             unstructured_docs.add(doc.page_content.strip())
 
@@ -159,7 +164,7 @@ class CRAG:
 
         # Step 5: Return List[str]
         print(f"RERANKED DOCS: {reranked_docs}")
-        return reranked_docs
+        return reranked_docs, results
 
     def evaluate_documents(self, query, documents):
         return [self.retrieval_evaluator(query, doc) for doc in documents]
@@ -212,12 +217,54 @@ class CRAG:
         sources = self.parse_search_results(web_results)
         return web_knowledge, sources
 
+    def generate_response_refined(self, query, docs, refined_knowledge=""):  
+        initial_prompt = PromptTemplate(
+            input_variables=["context_str", "question"],
+            template="""Kamu adalah konsultan pajak. Kamu menerima pertanyaan dari klien sebagai berikut:
+            Pertanyaan klien: {question}
+
+            Lalu kamu membuka buku untuk mencari informasi. Informasi yang kamu dapat:
+            {context_str}
+            {refined_knowledge}
+
+            Berdasarkan konteks di atas, berikan jawaban hukum yang sangat mendetail disertai dasar hukumnya."""
+        )
+
+        refine_prompt = PromptTemplate(
+            input_variables=["existing_answer", "context_str", "question"],
+            template="""
+        Kamu adalah konsultan pajak. Kamu menerima pertanyaan dari klien sebagai berikut:
+        Pertanyaan: {question}
+
+        Jawaban konsultan pajak sebelumnya:
+        {existing_answer}
+
+        Lalu kamu membuka buku untuk mencari informasi lebih lanjut. Informasi yang kamu dapatkan:
+        {context_str}
+        {refined_knowledge}
+        
+        Dengan mempertimbangkan informasi tambahan ini, revisi jawaban sebelumnya jika perlu. Berikan jawaban hukum yang sangat mendetail disertai dasar hukumnya.
+        Jika tidak perlu perubahan, ulangi jawaban dari konsultan pajak sebelumnya.
+        """
+        )
+
+        chain = load_qa_chain(
+            self.llm,
+            chain_type="refine",
+            question_prompt=initial_prompt,
+            refine_prompt=refine_prompt,
+            verbose=True
+        )
+        response = chain.run(input_documents=docs, question=query, refined_knowledge=refined_knowledge)
+        return(response)
+
     def generate_response(self, query, knowledge, sources):
         response_prompt = PromptTemplate(
             input_variables=["query", "knowledge", "sources"],
-            template="Berdasarkan pengetahuan berikut, jawablah pertanyaan."
-                    "Sertakan Referensi beserta tautannya (jika dari dokumen, sertakan nama filenya) di akhir jawaban Anda:"
+            template="Anda adalah konsultan pajak. Berdasarkan pengetahuan berikut, jawablah pertanyaan dengan sangat mendetail disertai dasar hukumnya."
+                    "Sertakan Referensi beserta tautannya (jika dari dokumen, sertakan nama filenya) di akhir jawaban Anda"
                     "\nPertanyaan: {query}\nPengetahuan: {knowledge}\nReferensi: {sources}\nJawaban:"
+                    "Apakah ada saran untuk pertanyaan follow-up? Jika ada, sarankan ke user."
         )
         input_variables = {
             "query": query,
@@ -266,14 +313,27 @@ class CRAG:
         final_response = self.run_context(processed_query)
         return final_response
 
+    def perform_human_as_a_tool(self, query, knowledge):
+        response_prompt = PromptTemplate(
+            input_variables=["query", "knowledge"],
+            template="Berdasarkan pertanyaan dari user, pengetahuan berikut masih ambigu untuk menjawab pertanyaan user."
+                    "tanyakan balik ke user maksud dari pertanyaannya untuk mengkerucutkan/menggiring pertanyaannya ke dalam pengetahuan yang kamu peroleh"
+                    "\nPertanyaan: {query}\nPengetahuan: {knowledge}\n Pertanyaan balik:"
+        )
+        input_variables = {
+            "query": query,
+            "knowledge": knowledge,
+        }
+        response_chain = response_prompt | self.llm
+        return response_chain.invoke(input_variables).content 
 
 
     def run_context(self, query):
         print(f"\nProcessing query: {query}")
 
         # Retrieve and evaluate documents
-        retrieved_docs = self.retrieve_documents(query, self.pinecone_vector_store)
-        eval_scores = self.evaluate_documents(query, retrieved_docs)
+        retrieved_docs, raw_chunks = self.retrieve_documents(query, self.pinecone_vector_store)
+        eval_scores = self.evaluate_documents(query, raw_chunks)
 
         print(f"\nRetrieved {len(retrieved_docs)} documents")
         print(f"Evaluation scores: {eval_scores}")
@@ -281,22 +341,28 @@ class CRAG:
         # Determine action based on evaluation scores
         max_score = max(eval_scores)
         sources = []
+        human_as_a_tool_response = ""
 
         if max_score > self.upper_threshold:
             print("\nAction: Correct - Using retrieved document")
-            best_doc = retrieved_docs[eval_scores.index(max_score)]
+            # best_doc = retrieved_docs[eval_scores.index(max_score)]
             final_knowledge = retrieved_docs
             sources.append(("Retrieved document", ""))
         elif max_score < self.lower_threshold:
-            print("\nAction: Incorrect - Performing web search")
+            print("\nAction: Incorrect - Performing human as a tool")
+            human_as_a_tool_response = self.perform_human_as_a_tool(query, retrieved_docs)
             final_knowledge, sources = self.perform_web_search(query)
+            response = self.generate_response(query, final_knowledge, sources)
+            return (human_as_a_tool_response + "\n\n" + response)
         else:
             print("\nAction: Ambiguous - Combining retrieved document and web search")
-            best_doc = retrieved_docs[eval_scores.index(max_score)]
+            # best_doc = retrieved_docs[eval_scores.index(max_score)]
+            human_as_a_tool_response = self.perform_human_as_a_tool(query, retrieved_docs)
             retrieved_knowledge = self.knowledge_refinement(retrieved_docs)
             web_knowledge, web_sources = self.perform_web_search(query)
             final_knowledge = "\n".join(retrieved_knowledge + web_knowledge)
             sources = [("Retrieved document", "")] + web_sources
+            response = self.generate_response_refined(query, raw_chunks, web_knowledge)
 
         print("\nFinal knowledge:")
         print(final_knowledge)
@@ -306,9 +372,10 @@ class CRAG:
             print(f"{title}: {link}" if link else title)
 
         print("\nGenerating response...")
-        response = self.generate_response(query, final_knowledge, sources)
+        # response = self.generate_response(query, final_knowledge, sources)
+        response = self.generate_response_refined(query, raw_chunks)
         print("\nResponse generated")
-        return response
+        return (human_as_a_tool_response + "\n\n" + response)
 
 
 # Function to validate command line inputs
