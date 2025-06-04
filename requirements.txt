@@ -19,5 +19,5 @@ deepeval
 pypdf 
 duckduckgo-search == 8.0.2
 sentence_transformers
-langchain_pinecone
-pinecone
+langchain_pinecone == 0.2.6
+pinecone == 6.0.2
