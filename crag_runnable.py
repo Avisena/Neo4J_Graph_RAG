@@ -1,5 +1,4 @@
 import os
-import re
 import sys
 import argparse
 import streamlit as st
@@ -124,9 +123,7 @@ class CRAG:
 
         # Initialize OpenAI language model
         self.llm = ChatOpenAI(model=model, max_tokens=max_tokens, temperature=temperature)
-        self.llm_reasoning = ChatGroq(temperature=0.9, groq_api_key=GROQ_API_KEY, model_name="llama-3.3-70b-versatile")
-
-        chat_groq = ChatGroq(temperature=0.9, groq_api_key=GROQ_API_KEY, model_name="deepseek-r1-distill-llama-70b")
+        # chat_groq = ChatGroq(temperature=0.9, groq_api_key=GROQ_API_KEY, model_name="deepseek-r1-distill-llama-70b")
         # self.llm = chat_groq.with_structured_output(include_raw=True)
         # Initialize search tool
         self.search = DuckDuckGoSearchResults()
@@ -150,7 +147,7 @@ class CRAG:
             search_type="similarity_score_threshold", search_kwargs={"score_threshold": 0.7}
         )
         # results = retriever.invoke(question)
-        results = vstore.similarity_search(question, k=5)
+        results = vstore.similarity_search(question, k=3)
         # print(results)
         for doc in results:
             unstructured_docs.add(doc.page_content.strip())
@@ -221,9 +218,6 @@ class CRAG:
         return web_knowledge, sources
 
     def generate_response_refined(self, query, docs, refined_knowledge=""):  
-        def remove_think_block(text):
-            # Removes entire <think>...</think> block
-            return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
         initial_prompt = PromptTemplate(
             input_variables=["context_str", "question"],
             template="""Kamu adalah konsultan pajak. Kamu menerima pertanyaan dari klien sebagai berikut:
@@ -242,7 +236,7 @@ class CRAG:
         Kamu adalah konsultan pajak. Kamu menerima pertanyaan dari klien sebagai berikut:
         Pertanyaan: {question}
 
-        Jawaban konsultan pajak sebelumnya:
+        Jawabanmu sebelumnya:
         {existing_answer}
 
         Lalu kamu membuka buku untuk mencari informasi lebih lanjut. Informasi yang kamu dapatkan:
@@ -250,19 +244,18 @@ class CRAG:
         {refined_knowledge}
         
         Dengan mempertimbangkan informasi tambahan ini, revisi jawaban sebelumnya jika perlu. Berikan jawaban hukum yang sangat mendetail disertai dasar hukumnya.
-        Jika tidak perlu perubahan, ulangi jawaban dari konsultan pajak sebelumnya.
+        Jika tidak perlu perubahan, ulangi jawabanmu sebelumnya.
         """
         )
 
         chain = load_qa_chain(
-            self.llm_reasoning,
+            self.llm,
             chain_type="refine",
             question_prompt=initial_prompt,
             refine_prompt=refine_prompt,
             verbose=True
         )
         response = chain.run(input_documents=docs, question=query, refined_knowledge=refined_knowledge)
-        response = remove_think_block(response)
         return(response)
 
     def generate_response(self, query, knowledge, sources):
