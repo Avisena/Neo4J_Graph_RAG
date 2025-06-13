@@ -12,6 +12,8 @@ from langchain_openai import ChatOpenAI
 from langchain_community.vectorstores import Neo4jVector
 from helper_functions import encode_pdf
 from langchain_openai import OpenAIEmbeddings
+from langchain_pinecone import PineconeVectorStore
+from pinecone import Pinecone, ServerlessSpec
 import json
 
 sys.path.append(os.path.abspath(
