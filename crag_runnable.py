@@ -9,7 +9,8 @@ from langchain_openai import ChatOpenAI
 from langchain_core.pydantic_v1 import BaseModel, Field
 from langchain.tools import DuckDuckGoSearchResults
 from langchain_openai import ChatOpenAI
-from langchain_community.vectorstores import Neo4jVector
+from langchain_community.vectorstores import Neo4jVector, Chroma, AstraDB
+from langchain_astradb import AstraDBVectorStore
 from helper_functions import encode_pdf
 from langchain_openai import OpenAIEmbeddings
 from langchain_pinecone import PineconeVectorStore
@@ -27,10 +28,8 @@ os.environ["NEO4J_USERNAME"] = st.secrets["NEO4J_USERNAME"]
 os.environ["NEO4J_PASSWORD"] = st.secrets["NEO4J_PASSWORD"]
 os.environ["PINECONE_API_KEY"] = st.secrets["PINECONE_API_KEY"]
 
-GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
 
-reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
-index_name = "tacia2"
+index_name = "tacia"
 pc = Pinecone()
 if index_name not in pc.list_indexes().names():
     pc.create_index(
@@ -40,6 +39,12 @@ if index_name not in pc.list_indexes().names():
         spec=ServerlessSpec(cloud="aws", region="us-east-1")
     )
 index = pc.Index(index_name)
+
+GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
+
+reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+vectorstore_dir = "chroma_db"
+
 class RetrievalEvaluatorInput(BaseModel):
     """
     Model for capturing the relevance score of a document to a query.
@@ -86,9 +91,23 @@ class CRAG:
         self.upper_threshold = upper_threshold
 
         # Encode the PDF document into a vector store
-        self.vectorstore = PineconeVectorStore(
+        # self.vectorstore = Neo4jVector.from_existing_graph(
+        #     OpenAIEmbeddings(),
+        #     search_type="hybrid",
+        #     node_label="Document",
+        #     text_node_properties=["text"],
+        #     embedding_node_property="embedding"
+        # )
+        # self.vector_store_astra = AstraDB(
+        #     embedding=OpenAIEmbeddings(),
+        #     collection_name="enforcea_tax", 
+        #     api_endpoint="https://4db977cb-ea15-4f3d-b94f-32d5823e8d0b-us-east-2.apps.astra.datastax.com",
+        #     token="AstraCS:iZFFdgOnZljUUBPikZYPbLbO:5be8829f4cf7a3cecd40ba40bd19d7ddf9158a3f5b85cface8b415a1b575d27a"
+        # )
+
+        self.pinecone_vector_store = PineconeVectorStore(
             index=index,             # This is the Pinecone index handle
-            embedding=OpenAIEmbeddings(model="text-embedding-3-small"),     # OpenAI embeddings
+            embedding=OpenAIEmbeddings(),     # OpenAI embeddings
             text_key="text"          # Make sure you use the same key used when storing text
         )
 
@@ -99,7 +118,7 @@ class CRAG:
         self.search = DuckDuckGoSearchResults()
 
     @staticmethod
-    def retrieve_documents(question, vstore, k=3):
+    def retrieve_documents(question, vstore, k=20):
         """
         Retrieve documents based on a query using a FAISS index.
 
@@ -112,8 +131,8 @@ class CRAG:
             List[str]: A list of the retrieved document contents.
         """
         unstructured_docs = set()
-        results = vstore.similarity_search(question)
-
+        results = vstore.similarity_search(question, k=k)
+        print(results)
         for doc in results:
             unstructured_docs.add(doc.page_content.strip())
 
@@ -124,8 +143,8 @@ class CRAG:
         pairs = [(question, doc) for doc in unstructured_docs]
         scores = reranker.predict(pairs)  # assumes reranker is defined globally
 
-        # Step 4: Sort by descending score
-        reranked_docs = [doc for _, doc in sorted(zip(scores, unstructured_docs), key=lambda x: -x[0])]
+        # Step 4: Sort by descending score and take top 5
+        reranked_docs = [doc for _, doc in sorted(zip(scores, unstructured_docs), key=lambda x: -x[0])][:10]
 
         # Step 5: Return List[str]
         print(reranked_docs)
@@ -159,7 +178,7 @@ class CRAG:
     def rewrite_query(self, query):
         prompt = PromptTemplate(
             input_variables=["query"],
-            template="Rewrite the following query to make it more suitable for a web search:\n{query}\nRewritten query:"
+            template="Tulis ulang kueri berikut agar lebih sesuai untuk pencarian web:\n{query}\nKueri yang telah ditulis ulang:"
         )
         chain = prompt | self.llm.with_structured_output(QueryRewriterInput)
         input_variables = {"query": query}
@@ -176,6 +195,7 @@ class CRAG:
 
     def perform_web_search(self, query):
         rewritten_query = self.rewrite_query(query)
+        print("REWRITTEN QUERY: ", rewritten_query)
         web_results = self.search.run(rewritten_query)
         web_knowledge = self.knowledge_refinement(web_results)
         sources = self.parse_search_results(web_results)
@@ -200,7 +220,7 @@ class CRAG:
         print(f"\nProcessing query: {query}")
 
         # Retrieve and evaluate documents
-        retrieved_docs = self.retrieve_documents(query, self.vectorstore)
+        retrieved_docs = self.retrieve_documents(query, self.pinecone_vector_store)
         eval_scores = self.evaluate_documents(query, retrieved_docs)
 
         print(f"\nRetrieved {len(retrieved_docs)} documents")
@@ -273,7 +293,6 @@ def parse_args():
 def main(args):
     # Initialize the CRAG process
     crag = CRAG(
-        path=args.path,
         model=args.model,
         max_tokens=args.max_tokens,
         temperature=args.temperature,
