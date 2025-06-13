@@ -23,10 +23,21 @@ os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
 os.environ["NEO4J_URI"] = st.secrets["NEO4J_URI"]
 os.environ["NEO4J_USERNAME"] = st.secrets["NEO4J_USERNAME"]
 os.environ["NEO4J_PASSWORD"] = st.secrets["NEO4J_PASSWORD"]
+os.environ["PINECONE_API_KEY"] = st.secrets["PINECONE_API_KEY"]
+
 GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
 
 reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
-
+index_name = "tacia2"
+pc = Pinecone()
+if index_name not in pc.list_indexes().names():
+    pc.create_index(
+        name=index_name,
+        dimension=1536,  # Depends on the embedding size you're using (1536 for text-embedding-ada-002)
+        metric="cosine",
+        spec=ServerlessSpec(cloud="aws", region="us-east-1")
+    )
+index = pc.Index(index_name)
 class RetrievalEvaluatorInput(BaseModel):
     """
     Model for capturing the relevance score of a document to a query.
@@ -73,12 +84,10 @@ class CRAG:
         self.upper_threshold = upper_threshold
 
         # Encode the PDF document into a vector store
-        self.vectorstore = Neo4jVector.from_existing_graph(
-            OpenAIEmbeddings(),
-            search_type="hybrid",
-            node_label="Document",
-            text_node_properties=["text"],
-            embedding_node_property="embedding"
+        self.vectorstore = PineconeVectorStore(
+            index=index,             # This is the Pinecone index handle
+            embedding=OpenAIEmbeddings(model="text-embedding-3-small"),     # OpenAI embeddings
+            text_key="text"          # Make sure you use the same key used when storing text
         )
 
         # Initialize OpenAI language model
