@@ -1,32 +1,17 @@
 import os
-import re
 import sys
 import argparse
 import streamlit as st
-
-from typing import Tuple, List
-
-from langchain_core.runnables import (
-    RunnableBranch, RunnableLambda, RunnableParallel, RunnablePassthrough
-)
-from langchain_core.messages import AIMessage, HumanMessage
-from langchain_groq import ChatGroq
 from dotenv import load_dotenv
 from langchain.prompts import PromptTemplate
-from langchain.chains.question_answering import load_qa_chain
-from langchain_core.output_parsers import StrOutputParser
 from sentence_transformers import CrossEncoder
 from langchain_openai import ChatOpenAI
 from langchain_core.pydantic_v1 import BaseModel, Field
 from langchain.tools import DuckDuckGoSearchResults
-from langchain_community.utilities import SearxSearchWrapper
 from langchain_openai import ChatOpenAI
-from langchain_community.vectorstores import Neo4jVector, Chroma, AstraDB
-from langchain_astradb import AstraDBVectorStore
+from langchain_community.vectorstores import Neo4jVector
 from helper_functions import encode_pdf
 from langchain_openai import OpenAIEmbeddings
-from langchain_pinecone import PineconeVectorStore
-from pinecone import Pinecone, ServerlessSpec
 import json
 
 sys.path.append(os.path.abspath(
@@ -38,23 +23,9 @@ os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
 os.environ["NEO4J_URI"] = st.secrets["NEO4J_URI"]
 os.environ["NEO4J_USERNAME"] = st.secrets["NEO4J_USERNAME"]
 os.environ["NEO4J_PASSWORD"] = st.secrets["NEO4J_PASSWORD"]
-os.environ["PINECONE_API_KEY"] = st.secrets["PINECONE_API_KEY"]
-
-index_name = "tacia2"
-pc = Pinecone()
-if index_name not in pc.list_indexes().names():
-    pc.create_index(
-        name=index_name,
-        dimension=1536,  # Depends on the embedding size you're using (1536 for text-embedding-ada-002)
-        metric="cosine",
-        spec=ServerlessSpec(cloud="aws", region="us-east-1")
-    )
-index = pc.Index(index_name)
-
 GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
 
 reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
-vectorstore_dir = "chroma_db"
 
 class RetrievalEvaluatorInput(BaseModel):
     """
@@ -83,7 +54,7 @@ class CRAG:
     A class to handle the CRAG process for document retrieval, evaluation, and knowledge refinement.
     """
 
-    def __init__(self, model="gpt-4o-mini", max_tokens=1000, temperature=0.7, lower_threshold=0.6,
+    def __init__(self, model="gpt-4o-mini", max_tokens=1000, temperature=0, lower_threshold=0.3,
                  upper_threshold=0.7):
         """
         Initializes the CRAG Retriever by encoding the PDF document and creating the necessary models and search tools.
@@ -102,38 +73,22 @@ class CRAG:
         self.upper_threshold = upper_threshold
 
         # Encode the PDF document into a vector store
-        # self.vectorstore = Neo4jVector.from_existing_graph(
-        #     OpenAIEmbeddings(),
-        #     search_type="hybrid",
-        #     node_label="Document",
-        #     text_node_properties=["text"],
-        #     embedding_node_property="embedding"
-        # )
-        # self.vector_store_astra = AstraDB(
-        #     embedding=OpenAIEmbeddings(),
-        #     collection_name="enforcea_tax", 
-        #     api_endpoint="https://4db977cb-ea15-4f3d-b94f-32d5823e8d0b-us-east-2.apps.astra.datastax.com",
-        #     token="AstraCS:iZFFdgOnZljUUBPikZYPbLbO:5be8829f4cf7a3cecd40ba40bd19d7ddf9158a3f5b85cface8b415a1b575d27a"
-        # )
-
-        self.pinecone_vector_store = PineconeVectorStore(
-            index=index,             # This is the Pinecone index handle
-            embedding=OpenAIEmbeddings(model="text-embedding-3-small"),     # OpenAI embeddings
-            text_key="text"          # Make sure you use the same key used when storing text
+        self.vectorstore = Neo4jVector.from_existing_graph(
+            OpenAIEmbeddings(),
+            search_type="hybrid",
+            node_label="Document",
+            text_node_properties=["text"],
+            embedding_node_property="embedding"
         )
 
         # Initialize OpenAI language model
         self.llm = ChatOpenAI(model=model, max_tokens=max_tokens, temperature=temperature)
-        self.llm_reasoning = ChatGroq(temperature=0.9, groq_api_key=GROQ_API_KEY, model_name="llama-3.3-70b-versatile")
 
-        chat_groq = ChatGroq(temperature=0.9, groq_api_key=GROQ_API_KEY, model_name="deepseek-r1-distill-llama-70b")
-        # self.llm = chat_groq.with_structured_output(include_raw=True)
         # Initialize search tool
         self.search = DuckDuckGoSearchResults()
-        self.search_searx = SearxSearchWrapper(searx_host="http://127.0.0.1:8888")
 
     @staticmethod
-    def retrieve_documents(question, vstore, k=20):
+    def retrieve_documents(question, vstore, k=3):
         """
         Retrieve documents based on a query using a FAISS index.
 
@@ -146,12 +101,8 @@ class CRAG:
             List[str]: A list of the retrieved document contents.
         """
         unstructured_docs = set()
-        retriever = vstore.as_retriever(
-            search_type="similarity_score_threshold", search_kwargs={"score_threshold": 0.7}
-        )
-        # results = retriever.invoke(question)
-        results = vstore.similarity_search(question, k=5)
-        # print(results)
+        results = vstore.similarity_search(question)
+
         for doc in results:
             unstructured_docs.add(doc.page_content.strip())
 
@@ -162,12 +113,12 @@ class CRAG:
         pairs = [(question, doc) for doc in unstructured_docs]
         scores = reranker.predict(pairs)  # assumes reranker is defined globally
 
-        # Step 4: Sort by descending score and take top 5
-        reranked_docs = [doc for _, doc in sorted(zip(scores, unstructured_docs), key=lambda x: -x[0])][:10]
+        # Step 4: Sort by descending score
+        reranked_docs = [doc for _, doc in sorted(zip(scores, unstructured_docs), key=lambda x: -x[0])]
 
         # Step 5: Return List[str]
-        print(f"RERANKED DOCS: {reranked_docs}")
-        return reranked_docs, results
+        print(reranked_docs)
+        return reranked_docs
 
     def evaluate_documents(self, query, documents):
         return [self.retrieval_evaluator(query, doc) for doc in documents]
@@ -175,8 +126,8 @@ class CRAG:
     def retrieval_evaluator(self, query, document):
         prompt = PromptTemplate(
             input_variables=["query", "document"],
-            template="Dalam skala dari 0 hingga 1, seberapa relevan dokumen berikut terhadap pertanyaan?"
-                     "Pertanyaan: {query}\nDokumen: {document}\nSkor relevansi:"
+            template="On a scale from 0 to 1, how relevant is the following document to the query? "
+                     "Query: {query}\nDocument: {document}\nRelevance score:"
         )
         chain = prompt | self.llm.with_structured_output(RetrievalEvaluatorInput)
         input_variables = {"query": query, "document": document}
@@ -186,8 +137,8 @@ class CRAG:
     def knowledge_refinement(self, document):
         prompt = PromptTemplate(
             input_variables=["document"],
-            template="Ekstrak informasi penting dari dokumen berikut dalam bentuk poin-poin:"
-                     "\n{document}\nPoin-poin penting:"
+            template="Extract the key information from the following document in bullet points:"
+                     "\n{document}\nKey points:"
         )
         chain = prompt | self.llm.with_structured_output(KnowledgeRefinementInput)
         input_variables = {"document": document}
@@ -197,7 +148,7 @@ class CRAG:
     def rewrite_query(self, query):
         prompt = PromptTemplate(
             input_variables=["query"],
-            template="Tulis ulang kueri berikut agar lebih sesuai untuk pencarian web:\n{query}\nKueri yang telah ditulis ulang:"
+            template="Rewrite the following query to make it more suitable for a web search:\n{query}\nRewritten query:"
         )
         chain = prompt | self.llm.with_structured_output(QueryRewriterInput)
         input_variables = {"query": query}
@@ -214,64 +165,17 @@ class CRAG:
 
     def perform_web_search(self, query):
         rewritten_query = self.rewrite_query(query)
-        print("REWRITTEN QUERY: ", rewritten_query)
         web_results = self.search.run(rewritten_query)
         web_knowledge = self.knowledge_refinement(web_results)
         sources = self.parse_search_results(web_results)
         return web_knowledge, sources
 
-    def generate_response_refined(self, query, docs, refined_knowledge=""):  
-        def remove_think_block(text):
-            # Removes entire <think>...</think> block
-            return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
-        initial_prompt = PromptTemplate(
-            input_variables=["context_str", "question"],
-            template="""Kamu adalah konsultan pajak. Kamu menerima pertanyaan dari klien sebagai berikut:
-            Pertanyaan klien: {question}
-
-            Lalu kamu membuka buku untuk mencari informasi. Informasi yang kamu dapat:
-            {context_str}
-            {refined_knowledge}
-
-            Berdasarkan konteks di atas, berikan jawaban hukum yang sangat mendetail disertai dasar hukumnya."""
-        )
-
-        refine_prompt = PromptTemplate(
-            input_variables=["existing_answer", "context_str", "question"],
-            template="""
-        Kamu adalah konsultan pajak. Kamu menerima pertanyaan dari klien sebagai berikut:
-        Pertanyaan: {question}
-
-        Jawaban konsultan pajak sebelumnya:
-        {existing_answer}
-
-        Lalu kamu membuka buku untuk mencari informasi lebih lanjut. Informasi yang kamu dapatkan:
-        {context_str}
-        {refined_knowledge}
-        
-        Dengan mempertimbangkan informasi tambahan ini, revisi jawaban sebelumnya jika perlu. Berikan jawaban hukum yang sangat mendetail disertai dasar hukumnya.
-        Jika tidak perlu perubahan, ulangi jawaban dari konsultan pajak sebelumnya.
-        """
-        )
-
-        chain = load_qa_chain(
-            self.llm_reasoning,
-            chain_type="refine",
-            question_prompt=initial_prompt,
-            refine_prompt=refine_prompt,
-            verbose=True
-        )
-        response = chain.run(input_documents=docs, question=query, refined_knowledge=refined_knowledge)
-        response = remove_think_block(response)
-        return(response)
-
     def generate_response(self, query, knowledge, sources):
         response_prompt = PromptTemplate(
             input_variables=["query", "knowledge", "sources"],
-            template="Anda adalah konsultan pajak. Berdasarkan pengetahuan berikut, jawablah pertanyaan dengan sangat mendetail disertai dasar hukumnya."
-                    "Sertakan Referensi beserta tautannya (jika dari dokumen, sertakan nama filenya) di akhir jawaban Anda"
-                    "\nPertanyaan: {query}\nPengetahuan: {knowledge}\nReferensi: {sources}\nJawaban:"
-                    "Apakah ada saran untuk pertanyaan follow-up? Jika ada, sarankan ke user."
+            template="Based on the following knowledge, answer the query. "
+                     "Include the sources with their links (if available) at the end of your answer:"
+                     "\nQuery: {query}\nKnowledge: {knowledge}\nSources: {sources}\nAnswer:"
         )
         input_variables = {
             "query": query,
@@ -281,66 +185,12 @@ class CRAG:
         response_chain = response_prompt | self.llm
         return response_chain.invoke(input_variables).content
 
-    def run(self, input_data):
-        CONDENSE_QUESTION_PROMPT = PromptTemplate(
-            input_variables=["chat_history", "question"],
-            template="""
-        Riwayat percakapan:
-        {chat_history}
-
-        Pertanyaan saat ini:
-        {question}
-
-        Tugas Anda adalah memeriksa apakah pertanyaan saat ini adalah lanjutan dari riwayat percakapan.
-        - Jika **YA**, reformulasikan pertanyaan agar berdiri sendiri.
-        - Jika **TIDAK**, kembalikan pertanyaan apa adanya tanpa perubahan.
-
-        Berikan hanya satu pertanyaan akhir sebagai hasil.
-        """,
-        )
-
-        def _format_chat_history(chat_history):
-            return "\n".join([f"User: {q}\nAI: {a}" for q, a in chat_history])
-
-        preprocess_chain = RunnableBranch(
-            (
-                RunnableLambda(lambda x: bool(x.get("chat_history"))),
-                RunnablePassthrough.assign(
-                    chat_history=lambda x: _format_chat_history(x["chat_history"])
-                )
-                | CONDENSE_QUESTION_PROMPT
-                | self.llm
-                | StrOutputParser()
-            ),
-            # Else: return original question
-            RunnableLambda(lambda x: x["question"]),
-        )
-        processed_query = preprocess_chain.invoke(input_data)
-        print(f"REFORMULATED MEMORY: {processed_query}")
-        final_response = self.run_context(processed_query)
-        return final_response
-
-    def perform_human_as_a_tool(self, query, knowledge):
-        response_prompt = PromptTemplate(
-            input_variables=["query", "knowledge"],
-            template="Berdasarkan pertanyaan dari user, pengetahuan berikut masih ambigu untuk menjawab pertanyaan user."
-                    "tanyakan balik ke user maksud dari pertanyaannya untuk mengkerucutkan/menggiring pertanyaannya ke dalam pengetahuan yang kamu peroleh"
-                    "\nPertanyaan: {query}\nPengetahuan: {knowledge}\n Pertanyaan balik:"
-        )
-        input_variables = {
-            "query": query,
-            "knowledge": knowledge,
-        }
-        response_chain = response_prompt | self.llm
-        return response_chain.invoke(input_variables).content 
-
-
-    def run_context(self, query):
+    def run(self, query):
         print(f"\nProcessing query: {query}")
 
         # Retrieve and evaluate documents
-        retrieved_docs, raw_chunks = self.retrieve_documents(query, self.pinecone_vector_store)
-        eval_scores = self.evaluate_documents(query, raw_chunks)
+        retrieved_docs = self.retrieve_documents(query, self.vectorstore)
+        eval_scores = self.evaluate_documents(query, retrieved_docs)
 
         print(f"\nRetrieved {len(retrieved_docs)} documents")
         print(f"Evaluation scores: {eval_scores}")
@@ -348,28 +198,22 @@ class CRAG:
         # Determine action based on evaluation scores
         max_score = max(eval_scores)
         sources = []
-        human_as_a_tool_response = ""
 
         if max_score > self.upper_threshold:
             print("\nAction: Correct - Using retrieved document")
-            # best_doc = retrieved_docs[eval_scores.index(max_score)]
-            final_knowledge = retrieved_docs
+            best_doc = retrieved_docs[eval_scores.index(max_score)]
+            final_knowledge = best_doc
             sources.append(("Retrieved document", ""))
         elif max_score < self.lower_threshold:
-            print("\nAction: Incorrect - Performing human as a tool")
-            human_as_a_tool_response = self.perform_human_as_a_tool(query, retrieved_docs)
+            print("\nAction: Incorrect - Performing web search")
             final_knowledge, sources = self.perform_web_search(query)
-            response = self.generate_response(query, final_knowledge, sources)
-            return (human_as_a_tool_response + "\n\n" + response)
         else:
             print("\nAction: Ambiguous - Combining retrieved document and web search")
-            # best_doc = retrieved_docs[eval_scores.index(max_score)]
-            human_as_a_tool_response = self.perform_human_as_a_tool(query, retrieved_docs)
-            retrieved_knowledge = self.knowledge_refinement(retrieved_docs)
+            best_doc = retrieved_docs[eval_scores.index(max_score)]
+            retrieved_knowledge = self.knowledge_refinement(best_doc)
             web_knowledge, web_sources = self.perform_web_search(query)
             final_knowledge = "\n".join(retrieved_knowledge + web_knowledge)
             sources = [("Retrieved document", "")] + web_sources
-            response = self.generate_response_refined(query, raw_chunks, web_knowledge)
 
         print("\nFinal knowledge:")
         print(final_knowledge)
@@ -379,10 +223,9 @@ class CRAG:
             print(f"{title}: {link}" if link else title)
 
         print("\nGenerating response...")
-        # response = self.generate_response(query, final_knowledge, sources)
-        response = self.generate_response_refined(query, raw_chunks)
+        response = self.generate_response(query, final_knowledge, sources)
         print("\nResponse generated")
-        return (human_as_a_tool_response + "\n\n" + response)
+        return response
 
 
 # Function to validate command line inputs
@@ -419,6 +262,7 @@ def parse_args():
 def main(args):
     # Initialize the CRAG process
     crag = CRAG(
+        path=args.path,
         model=args.model,
         max_tokens=args.max_tokens,
         temperature=args.temperature,
