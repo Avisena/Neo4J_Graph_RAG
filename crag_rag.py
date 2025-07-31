@@ -1,247 +1,428 @@
 import os
 import sys
+import argparse
 import streamlit as st
+
+from typing import Tuple, List
+
+from langchain_core.runnables import (
+    RunnableBranch, RunnableLambda, RunnableParallel, RunnablePassthrough
+)
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_groq import ChatGroq
 from dotenv import load_dotenv
-from langchain_community.graphs import Neo4jGraph
 from langchain.prompts import PromptTemplate
-from langchain_community.vectorstores import Neo4jVector
-from langchain_openai import ChatOpenAI
+from langchain.chains.question_answering import load_qa_chain
+from langchain_core.output_parsers import StrOutputParser
 from sentence_transformers import CrossEncoder
+from langchain_openai import ChatOpenAI
 from langchain_core.pydantic_v1 import BaseModel, Field
-from langchain_community.tools import DuckDuckGoSearchResults
 from langchain.tools import DuckDuckGoSearchResults
+from langchain_community.utilities import SearxSearchWrapper
+from langchain_openai import ChatOpenAI
+from langchain_community.vectorstores import Neo4jVector, Chroma, AstraDB
+from langchain_astradb import AstraDBVectorStore
+from helper_functions import encode_pdf
+from langchain_openai import OpenAIEmbeddings
+from langchain_pinecone import PineconeVectorStore
+from pinecone import Pinecone, ServerlessSpec
+import json
 
-# Original path append replaced for Colab compatibility
-from helper_functions import *
-# from evalute_rag import *
+sys.path.append(os.path.abspath(
+    os.path.join(os.getcwd(), '..')))  # Add the parent directory to the path since we work with notebooks
 
 # Load environment variables from a .env file
-# Load environment variables from a .env file
-load_dotenv(override=True)
-
-# Env setup
+load_dotenv()
 os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
 os.environ["NEO4J_URI"] = st.secrets["NEO4J_URI"]
 os.environ["NEO4J_USERNAME"] = st.secrets["NEO4J_USERNAME"]
 os.environ["NEO4J_PASSWORD"] = st.secrets["NEO4J_PASSWORD"]
+os.environ["PINECONE_API_KEY"] = st.secrets["PINECONE_API_KEY"]
+
+index_name = "tacia2"
+pc = Pinecone()
+if index_name not in pc.list_indexes().names():
+    pc.create_index(
+        name=index_name,
+        dimension=1536,  # Depends on the embedding size you're using (1536 for text-embedding-ada-002)
+        metric="cosine",
+        spec=ServerlessSpec(cloud="aws", region="us-east-1")
+    )
+index = pc.Index(index_name)
+
 GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
+
 reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+vectorstore_dir = "chroma_db"
 
-graph = Neo4jGraph()
-llm = ChatOpenAI(temperature=0.2,   # Lower temperature for precise, factual responses
-    top_p=0.85,        # Balanced flexibility and coherence
-    frequency_penalty=0.3,  # Avoid repetition of terms or phrases
-    presence_penalty=0.3, 
-    model_name="gpt-4o-mini")
-
-vector_index = Neo4jVector.from_existing_graph(
-    OpenAIEmbeddings(),
-    search_type="hybrid",
-    node_label="Document",
-    text_node_properties=["text"],
-    embedding_node_property="embedding"
-)
-search = DuckDuckGoSearchResults()
-
-# Retrieval Evaluator
 class RetrievalEvaluatorInput(BaseModel):
-    relevance_score: float = Field(..., description="The relevance score of the document to the query. the score should be between 0 and 1.")
-def retrieval_evaluator(query: str, document: str) -> float:
-    prompt = PromptTemplate(
-        input_variables=["query", "document"],
-        template="On a scale from 0 to 1, how relevant is the following document to the query? Query: {query}\nDocument: {document}\nRelevance score:"
-    )
-    chain = prompt | llm.with_structured_output(RetrievalEvaluatorInput)
-    input_variables = {"query": query, "document": document}
-    result = chain.invoke(input_variables).relevance_score
-    return result
+    """
+    Model for capturing the relevance score of a document to a query.
+    """
+    relevance_score: float = Field(..., description="Relevance score between 0 and 1, "
+                                                    "indicating the document's relevance to the query.")
 
-# Knowledge Refinement
-class KnowledgeRefinementInput(BaseModel):
-    key_points: str = Field(..., description="The document to extract key information from.")
-def knowledge_refinement(document: str) -> List[str]:
-    prompt = PromptTemplate(
-        input_variables=["document"],
-        template="Extract the key information from the following document in bullet points:\n{document}\nKey points:"
-    )
-    chain = prompt | llm.with_structured_output(KnowledgeRefinementInput)
-    input_variables = {"document": document}
-    result = chain.invoke(input_variables).key_points
-    return [point.strip() for point in result.split('\n') if point.strip()]
 
-# Web Search Query Rewriter
 class QueryRewriterInput(BaseModel):
-    query: str = Field(..., description="The query to rewrite.")
-def rewrite_query(query: str) -> str:
-    prompt = PromptTemplate(
-        input_variables=["query"],
-        template="Rewrite the following query to make it more suitable for a web search:\n{query}\nRewritten query:"
+    """
+    Model for capturing a rewritten query suitable for web search.
+    """
+    query: str = Field(..., description="The query rewritten for better web search results.")
+
+
+class KnowledgeRefinementInput(BaseModel):
+    """
+    Model for extracting key points from a document.
+    """
+    key_points: str = Field(..., description="Key information extracted from the document in bullet-point form.")
+
+
+class CRAG:
+    """
+    A class to handle the CRAG process for document retrieval, evaluation, and knowledge refinement.
+    """
+
+    def __init__(self, model="gpt-4o-mini", max_tokens=1000, temperature=0.7, lower_threshold=0.6,
+                 upper_threshold=0.7):
+        """
+        Initializes the CRAG Retriever by encoding the PDF document and creating the necessary models and search tools.
+
+        Args:
+            path (str): Path to the PDF file to encode.
+            model (str): The language model to use for the CRAG process.
+            max_tokens (int): Maximum tokens to use in LLM responses (default: 1000).
+            temperature (float): The temperature to use for LLM responses (default: 0).
+            lower_threshold (float): Lower threshold for document evaluation scores (default: 0.3).
+            upper_threshold (float): Upper threshold for document evaluation scores (default: 0.7).
+        """
+        print("\n--- Initializing CRAG Process ---")
+
+        self.lower_threshold = lower_threshold
+        self.upper_threshold = upper_threshold
+
+        # Encode the PDF document into a vector store
+        # self.vectorstore = Neo4jVector.from_existing_graph(
+        #     OpenAIEmbeddings(),
+        #     search_type="hybrid",
+        #     node_label="Document",
+        #     text_node_properties=["text"],
+        #     embedding_node_property="embedding"
+        # )
+        # self.vector_store_astra = AstraDB(
+        #     embedding=OpenAIEmbeddings(),
+        #     collection_name="enforcea_tax", 
+        #     api_endpoint="https://4db977cb-ea15-4f3d-b94f-32d5823e8d0b-us-east-2.apps.astra.datastax.com",
+        #     token="AstraCS:iZFFdgOnZljUUBPikZYPbLbO:5be8829f4cf7a3cecd40ba40bd19d7ddf9158a3f5b85cface8b415a1b575d27a"
+        # )
+
+        self.pinecone_vector_store = PineconeVectorStore(
+            index=index,             # This is the Pinecone index handle
+            embedding=OpenAIEmbeddings(model="text-embedding-3-small"),     # OpenAI embeddings
+            text_key="text"          # Make sure you use the same key used when storing text
+        )
+
+        # Initialize OpenAI language model
+        self.llm = ChatOpenAI(model=model, max_tokens=max_tokens, temperature=temperature)
+        # chat_groq = ChatGroq(temperature=0.9, groq_api_key=GROQ_API_KEY, model_name="deepseek-r1-distill-llama-70b")
+        # self.llm = chat_groq.with_structured_output(include_raw=True)
+        # Initialize search tool
+        self.search = DuckDuckGoSearchResults()
+        self.search_searx = SearxSearchWrapper(searx_host="http://127.0.0.1:8888")
+
+    @staticmethod
+    def retrieve_documents(question, vstore, k=20):
+        """
+        Retrieve documents based on a query using a FAISS index.
+
+        Args:
+            query (str): The query string to search for.
+            faiss_index (FAISS): The FAISS index used for similarity search.
+            k (int): The number of top documents to retrieve. Defaults to 3.
+
+        Returns:
+            List[str]: A list of the retrieved document contents.
+        """
+        unstructured_docs = set()
+        retriever = vstore.as_retriever(
+            search_type="similarity_score_threshold", search_kwargs={"score_threshold": 0.7}
+        )
+        # results = retriever.invoke(question)
+        results = vstore.similarity_search(question, k=3)
+        # print(results)
+        for doc in results:
+            unstructured_docs.add(doc.page_content.strip())
+
+        # Step 2: Convert to list
+        unstructured_docs = list(unstructured_docs)
+
+        # Step 3: Rerank using a cross-encoder (optional)
+        pairs = [(question, doc) for doc in unstructured_docs]
+        scores = reranker.predict(pairs)  # assumes reranker is defined globally
+
+        # Step 4: Sort by descending score and take top 5
+        reranked_docs = [doc for _, doc in sorted(zip(scores, unstructured_docs), key=lambda x: -x[0])][:10]
+
+        # Step 5: Return List[str]
+        print(f"RERANKED DOCS: {reranked_docs}")
+        return reranked_docs, results
+
+    def evaluate_documents(self, query, documents):
+        return [self.retrieval_evaluator(query, doc) for doc in documents]
+
+    def retrieval_evaluator(self, query, document):
+        prompt = PromptTemplate(
+            input_variables=["query", "document"],
+            template="Dalam skala dari 0 hingga 1, seberapa relevan dokumen berikut terhadap pertanyaan?"
+                     "Pertanyaan: {query}\nDokumen: {document}\nSkor relevansi:"
+        )
+        chain = prompt | self.llm.with_structured_output(RetrievalEvaluatorInput)
+        input_variables = {"query": query, "document": document}
+        result = chain.invoke(input_variables).relevance_score
+        return result
+
+    def knowledge_refinement(self, document):
+        prompt = PromptTemplate(
+            input_variables=["document"],
+            template="Ekstrak informasi penting dari dokumen berikut dalam bentuk poin-poin:"
+                     "\n{document}\nPoin-poin penting:"
+        )
+        chain = prompt | self.llm.with_structured_output(KnowledgeRefinementInput)
+        input_variables = {"document": document}
+        result = chain.invoke(input_variables).key_points
+        return [point.strip() for point in result.split('\n') if point.strip()]
+
+    def rewrite_query(self, query):
+        prompt = PromptTemplate(
+            input_variables=["query"],
+            template="Tulis ulang kueri berikut agar lebih sesuai untuk pencarian web:\n{query}\nKueri yang telah ditulis ulang:"
+        )
+        chain = prompt | self.llm.with_structured_output(QueryRewriterInput)
+        input_variables = {"query": query}
+        return chain.invoke(input_variables).query.strip()
+
+    @staticmethod
+    def parse_search_results(results_string):
+        try:
+            results = json.loads(results_string)
+            return [(result.get('title', 'Untitled'), result.get('link', '')) for result in results]
+        except json.JSONDecodeError:
+            print("Error parsing search results. Returning empty list.")
+            return []
+
+    def perform_web_search(self, query):
+        rewritten_query = self.rewrite_query(query)
+        print("REWRITTEN QUERY: ", rewritten_query)
+        web_results = self.search.run(rewritten_query)
+        web_knowledge = self.knowledge_refinement(web_results)
+        sources = self.parse_search_results(web_results)
+        return web_knowledge, sources
+
+    def generate_response_refined(self, query, docs, refined_knowledge=""):  
+        initial_prompt = PromptTemplate(
+            input_variables=["context_str", "question"],
+            template="""Kamu adalah konsultan pajak. Kamu menerima pertanyaan dari klien sebagai berikut:
+            Pertanyaan klien: {question}
+
+            Lalu kamu membuka buku untuk mencari informasi. Informasi yang kamu dapat:
+            {context_str}
+            {refined_knowledge}
+
+            Berdasarkan konteks di atas, berikan jawaban hukum yang sangat mendetail disertai dasar hukumnya."""
+        )
+
+        refine_prompt = PromptTemplate(
+            input_variables=["existing_answer", "context_str", "question"],
+            template="""
+        Kamu adalah konsultan pajak. Kamu menerima pertanyaan dari klien sebagai berikut:
+        Pertanyaan: {question}
+
+        Jawabanmu sebelumnya:
+        {existing_answer}
+
+        Lalu kamu membuka buku untuk mencari informasi lebih lanjut. Informasi yang kamu dapatkan:
+        {context_str}
+        {refined_knowledge}
+        
+        Dengan mempertimbangkan informasi tambahan ini, revisi jawaban sebelumnya jika perlu. Berikan jawaban hukum yang sangat mendetail disertai dasar hukumnya.
+        Jika tidak perlu perubahan, ulangi jawabanmu sebelumnya.
+        """
+        )
+
+        chain = load_qa_chain(
+            self.llm,
+            chain_type="refine",
+            question_prompt=initial_prompt,
+            refine_prompt=refine_prompt,
+            verbose=True
+        )
+        response = chain.run(input_documents=docs, question=query, refined_knowledge=refined_knowledge)
+        return(response)
+
+    def generate_response(self, query, knowledge, sources):
+        response_prompt = PromptTemplate(
+            input_variables=["query", "knowledge", "sources"],
+            template="Anda adalah konsultan pajak. Berdasarkan pengetahuan berikut, jawablah pertanyaan dengan sangat mendetail disertai dasar hukumnya."
+                    "Sertakan Referensi beserta tautannya (jika dari dokumen, sertakan nama filenya) di akhir jawaban Anda"
+                    "\nPertanyaan: {query}\nPengetahuan: {knowledge}\nReferensi: {sources}\nJawaban:"
+                    "Apakah ada saran untuk pertanyaan follow-up? Jika ada, sarankan ke user."
+        )
+        input_variables = {
+            "query": query,
+            "knowledge": knowledge,
+            "sources": "\n".join([f"{title}: {link}" if link else title for title, link in sources])
+        }
+        response_chain = response_prompt | self.llm
+        return response_chain.invoke(input_variables).content
+
+    def run(self, input_data):
+        CONDENSE_QUESTION_PROMPT = PromptTemplate(
+            input_variables=["chat_history", "question"],
+            template="""
+        Riwayat percakapan:
+        {chat_history}
+
+        Pertanyaan saat ini:
+        {question}
+
+        Tugas Anda adalah memeriksa apakah pertanyaan saat ini adalah lanjutan dari riwayat percakapan.
+        - Jika **YA**, reformulasikan pertanyaan agar berdiri sendiri.
+        - Jika **TIDAK**, kembalikan pertanyaan apa adanya tanpa perubahan.
+
+        Berikan hanya satu pertanyaan akhir sebagai hasil.
+        """,
+        )
+
+        def _format_chat_history(chat_history):
+            return "\n".join([f"User: {q}\nAI: {a}" for q, a in chat_history])
+
+        preprocess_chain = RunnableBranch(
+            (
+                RunnableLambda(lambda x: bool(x.get("chat_history"))),
+                RunnablePassthrough.assign(
+                    chat_history=lambda x: _format_chat_history(x["chat_history"])
+                )
+                | CONDENSE_QUESTION_PROMPT
+                | self.llm
+                | StrOutputParser()
+            ),
+            # Else: return original question
+            RunnableLambda(lambda x: x["question"]),
+        )
+        processed_query = preprocess_chain.invoke(input_data)
+        print(f"REFORMULATED MEMORY: {processed_query}")
+        final_response = self.run_context(processed_query)
+        return final_response
+
+    def perform_human_as_a_tool(self, query, knowledge):
+        response_prompt = PromptTemplate(
+            input_variables=["query", "knowledge"],
+            template="Berdasarkan pertanyaan dari user, pengetahuan berikut masih ambigu untuk menjawab pertanyaan user."
+                    "tanyakan balik ke user maksud dari pertanyaannya untuk mengkerucutkan/menggiring pertanyaannya ke dalam pengetahuan yang kamu peroleh"
+                    "\nPertanyaan: {query}\nPengetahuan: {knowledge}\n Pertanyaan balik:"
+        )
+        input_variables = {
+            "query": query,
+            "knowledge": knowledge,
+        }
+        response_chain = response_prompt | self.llm
+        return response_chain.invoke(input_variables).content 
+
+
+    def run_context(self, query):
+        print(f"\nProcessing query: {query}")
+
+        # Retrieve and evaluate documents
+        retrieved_docs, raw_chunks = self.retrieve_documents(query, self.pinecone_vector_store)
+        eval_scores = self.evaluate_documents(query, raw_chunks)
+
+        print(f"\nRetrieved {len(retrieved_docs)} documents")
+        print(f"Evaluation scores: {eval_scores}")
+
+        # Determine action based on evaluation scores
+        max_score = max(eval_scores)
+        sources = []
+        human_as_a_tool_response = ""
+
+        if max_score > self.upper_threshold:
+            print("\nAction: Correct - Using retrieved document")
+            # best_doc = retrieved_docs[eval_scores.index(max_score)]
+            final_knowledge = retrieved_docs
+            sources.append(("Retrieved document", ""))
+        elif max_score < self.lower_threshold:
+            print("\nAction: Incorrect - Performing web search")
+            final_knowledge, sources = self.perform_web_search(query)
+            response = self.generate_response(query, final_knowledge, sources)
+            return (response)
+        else:
+            print("\nAction: Ambiguous - Combining retrieved document and web search")
+            # best_doc = retrieved_docs[eval_scores.index(max_score)]
+            human_as_a_tool_response = self.perform_human_as_a_tool(query, retrieved_docs)
+            retrieved_knowledge = self.knowledge_refinement(retrieved_docs)
+            web_knowledge, web_sources = self.perform_web_search(query)
+            final_knowledge = "\n".join(retrieved_knowledge + web_knowledge)
+            sources = [("Retrieved document", "")] + web_sources
+            response = self.generate_response_refined(query, raw_chunks, web_knowledge)
+
+        print("\nFinal knowledge:")
+        print(final_knowledge)
+
+        print("\nSources:")
+        for title, link in sources:
+            print(f"{title}: {link}" if link else title)
+
+        print("\nGenerating response...")
+        # response = self.generate_response(query, final_knowledge, sources)
+        response = self.generate_response_refined(query, raw_chunks)
+        print("\nResponse generated")
+        return (human_as_a_tool_response + "\n\n" + response)
+
+
+# Function to validate command line inputs
+def validate_args(args):
+    if args.max_tokens <= 0:
+        raise ValueError("max_tokens must be a positive integer.")
+    if args.temperature < 0 or args.temperature > 1:
+        raise ValueError("temperature must be between 0 and 1.")
+    return args
+
+
+# Function to parse command line arguments
+def parse_args():
+    parser = argparse.ArgumentParser(description="CRAG Process for Document Retrieval and Query Answering.")
+    parser.add_argument("--path", type=str, default="../data/Understanding_Climate_Change.pdf",
+                        help="Path to the PDF file to encode.")
+    parser.add_argument("--model", type=str, default="gpt-4o-mini",
+                        help="Language model to use (default: gpt-4o-mini).")
+    parser.add_argument("--max_tokens", type=int, default=1000,
+                        help="Maximum tokens to use in LLM responses (default: 1000).")
+    parser.add_argument("--temperature", type=float, default=0,
+                        help="Temperature to use for LLM responses (default: 0).")
+    parser.add_argument("--query", type=str, default="What are the main causes of climate change?",
+                        help="Query to test the CRAG process.")
+    parser.add_argument("--lower_threshold", type=float, default=0.3,
+                        help="Lower threshold for score evaluation (default: 0.3).")
+    parser.add_argument("--upper_threshold", type=float, default=0.7,
+                        help="Upper threshold for score evaluation (default: 0.7).")
+
+    return validate_args(parser.parse_args())
+
+
+# Main function to handle argument parsing and call the CRAG class
+def main(args):
+    # Initialize the CRAG process
+    crag = CRAG(
+        model=args.model,
+        max_tokens=args.max_tokens,
+        temperature=args.temperature,
+        lower_threshold=args.lower_threshold,
+        upper_threshold=args.upper_threshold
     )
-    chain = prompt | llm.with_structured_output(QueryRewriterInput)
-    input_variables = {"query": query}
-    return chain.invoke(input_variables).query.strip()
+
+    # Process the query
+    response = crag.run(args.query)
+    print(f"Query: {args.query}")
+    print(f"Answer: {response}")
 
 
-
-def parse_search_results(results_string: str):
-    """
-    Parse a JSON string of search results into a list of title-link tuples.
-
-    Args:
-        results_string (str): A JSON-formatted string containing search results.
-
-    Returns:
-        List[Tuple[str, str]]: A list of tuples, where each tuple contains the title and link of a search result.
-                               If parsing fails, an empty list is returned.
-    """
-    try:
-        # Attempt to parse the JSON string
-        results = json.loads(results_string)
-        # Extract and return the title and link from each result
-        return [(result.get('title', 'Untitled'), result.get('link', '')) for result in results]
-    except json.JSONDecodeError:
-        # Handle JSON decoding errors by returning an empty list
-        print("Error parsing search results. Returning empty list.")
-        return []
-    
-def retrieve_documents(question: str) -> List[str]:
-    """
-    Retrieve documents based on a query using a FAISS index.
-
-    Args:
-        query (str): The query string to search for.
-        faiss_index (FAISS): The FAISS index used for similarity search.
-        k (int): The number of top documents to retrieve. Defaults to 3.
-
-    Returns:
-        List[str]: A list of the retrieved document contents.
-    """
-    unstructured_docs = set()
-    results = vector_index.similarity_search(question)
-    for doc in results:
-        unstructured_docs.add(doc.page_content.strip())
-
-
-    # Rerank unstructured docs
-    unstructured_docs = list(unstructured_docs)
-    pairs = [(question, doc) for doc in unstructured_docs]
-    scores = reranker.predict(pairs)
-
-    # Sort by descending score
-    reranked_docs = [doc for _, doc in sorted(zip(scores, unstructured_docs), key=lambda x: -x[0])]
-
-    # Combine and format results
-    unstructured_data = "\n#Document ".join(reranked_docs)
-    return(unstructured_data)
-
-def evaluate_documents(query: str, documents: List[str]) -> List[float]:
-    """
-    Evaluate the relevance of documents based on a query.
-
-    Args:
-        query (str): The query string.
-        documents (List[str]): A list of document contents to evaluate.
-
-    Returns:
-        List[float]: A list of relevance scores for each document.
-    """
-    return [retrieval_evaluator(query, doc) for doc in documents]
-
-def perform_web_search(query: str):
-    """
-    Perform a web search based on a query.
-
-    Args:
-        query (str): The query string to search for.
-
-    Returns:
-        Tuple[List[str], List[Tuple[str, str]]]: 
-            - A list of refined knowledge obtained from the web search.
-            - A list of tuples containing titles and links of the sources.
-    """
-    rewritten_query = rewrite_query(query)
-    web_results = search.run(rewritten_query)
-    web_knowledge = knowledge_refinement(web_results)
-    sources = parse_search_results(web_results)
-    return web_knowledge, sources
-
-def generate_response(query: str, knowledge: str, sources):
-    """
-    Generate a response to a query using knowledge and sources.
-
-    Args:
-        query (str): The query string.
-        knowledge (str): The refined knowledge to use in the response.
-        sources (List[Tuple[str, str]]): A list of tuples containing titles and links of the sources.
-
-    Returns:
-        str: The generated response.
-    """
-    response_prompt = PromptTemplate(
-        input_variables=["query", "knowledge", "sources"],
-        template="Based on the following knowledge, answer the query. Include the sources with their links (if available) at the end of your answer:\nQuery: {query}\nKnowledge: {knowledge}\nSources: {sources}\nAnswer:"
-    )
-    input_variables = {
-        "query": query,
-        "knowledge": knowledge,
-        "sources": "\n".join([f"{title}: {link}" if link else title for title, link in sources])
-    }
-    response_chain = response_prompt | llm
-    return response_chain.invoke(input_variables).content
-
-
-
-def crag_process(query: str) -> str:
-    """
-    Process a query by retrieving, evaluating, and using documents or performing a web search to generate a response.
-
-    Args:
-        query (str): The query string to process.
-        faiss_index (FAISS): The FAISS index used for document retrieval.
-
-    Returns:
-        str: The generated response based on the query.
-    """
-    print(f"\nProcessing query: {query}")
-
-    # Retrieve and evaluate documents
-    retrieved_docs = retrieve_documents(query)
-    eval_scores = evaluate_documents(query, retrieved_docs)
-    
-    print(f"\nRetrieved {len(retrieved_docs)} documents")
-    print(f"Evaluation scores: {eval_scores}")
-
-    # Determine action based on evaluation scores
-    max_score = max(eval_scores)
-    sources = []
-    
-    if max_score > 0.7:
-        print("\nAction: Correct - Using retrieved document")
-        best_doc = retrieved_docs[eval_scores.index(max_score)]
-        final_knowledge = best_doc
-        sources.append(("Retrieved document", ""))
-    elif max_score < 0.3:
-        print("\nAction: Incorrect - Performing web search")
-        final_knowledge, sources = perform_web_search(query)
-    else:
-        print("\nAction: Ambiguous - Combining retrieved document and web search")
-        best_doc = retrieved_docs[eval_scores.index(max_score)]
-        # Refine the retrieved knowledge
-        retrieved_knowledge = knowledge_refinement(best_doc)
-        web_knowledge, web_sources = perform_web_search(query)
-        final_knowledge = "\n".join(retrieved_knowledge + web_knowledge)
-        sources = [("Retrieved document", "")] + web_sources
-
-    print("\nFinal knowledge:")
-    print(final_knowledge)
-    
-    print("\nSources:")
-    for title, link in sources:
-        print(f"{title}: {link}" if link else title)
-
-    # Generate response
-    print("\nGenerating response...")
-    response = generate_response(query, final_knowledge, sources)
-
-    print("\nResponse generated")
-    return response
+if __name__ == '__main__':
+    main(parse_args())
